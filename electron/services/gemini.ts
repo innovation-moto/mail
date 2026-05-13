@@ -1,18 +1,25 @@
-import { GoogleGenerativeAI, GenerativeModel } from '@google/generative-ai';
+import OpenAI from 'openai';
 import { AiTone, AiCategory, AiPriority, AiClassifyResult, AiSummarizeResult, SmartSearchResult } from '../../shared/types';
 import { Email } from '../../shared/types';
 
-let genAI: GoogleGenerativeAI | null = null;
-let model: GenerativeModel | null = null;
+let client: OpenAI | null = null;
 
 export function initGemini(apiKey: string): void {
-  genAI = new GoogleGenerativeAI(apiKey);
-  model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+  client = new OpenAI({ apiKey });
 }
 
-function getModel(): GenerativeModel {
-  if (!model) throw new Error('Gemini APIキーが設定されていません。設定画面でAPIキーを入力してください。');
-  return model;
+function getClient(): OpenAI {
+  if (!client) throw new Error('OpenAI APIキーが設定されていません。設定画面でAPIキーを入力してください。');
+  return client;
+}
+
+async function chat(prompt: string): Promise<string> {
+  const res = await getClient().chat.completions.create({
+    model: 'gpt-4o-mini',
+    messages: [{ role: 'user', content: prompt }],
+    temperature: 0.7,
+  });
+  return res.choices[0]?.message?.content ?? '';
 }
 
 export async function generateReply(
@@ -36,8 +43,7 @@ ${bodyText.slice(0, 3000)}
 ---
 返信文のみを出力してください（宛名・挨拶・本文・締め・署名の構成で）。余分な説明は不要です。`;
 
-  const result = await getModel().generateContent(prompt);
-  return result.response.text();
+  return chat(prompt);
 }
 
 export async function summarizeEmail(
@@ -52,19 +58,13 @@ export async function summarizeEmail(
 ${bodyText.slice(0, 4000)}
 
 ---
-以下のJSON形式で回答してください（他のテキストは不要）:
-{
-  "summary": "3〜5行の要約",
-  "actions": ["要アクション項目1", "要アクション項目2"]
-}`;
+以下のJSON形式のみで回答してください（コードブロック不要）:
+{"summary":"3〜5行の要約","actions":["要アクション項目1","要アクション項目2"]}`;
 
-  const result = await getModel().generateContent(prompt);
-  const text = result.response.text().trim();
+  const text = (await chat(prompt)).trim();
   try {
     const jsonMatch = text.match(/\{[\s\S]*\}/);
-    if (jsonMatch) {
-      return JSON.parse(jsonMatch[0]) as AiSummarizeResult;
-    }
+    if (jsonMatch) return JSON.parse(jsonMatch[0]) as AiSummarizeResult;
   } catch {}
   return { summary: text, actions: [] };
 }
@@ -80,14 +80,10 @@ export async function classifyEmail(
 件名: ${subject}
 本文（冒頭）: ${bodyText.slice(0, 1000)}
 
-以下のJSON形式で回答してください（他のテキストは不要）:
-{
-  "category": "important | task | info | newsletter | promotion | other のいずれか",
-  "priority": "high | medium | low のいずれか"
-}`;
+以下のJSON形式のみで回答してください（コードブロック不要）:
+{"category":"important|task|info|newsletter|promotion|other のいずれか","priority":"high|medium|low のいずれか"}`;
 
-  const result = await getModel().generateContent(prompt);
-  const text = result.response.text().trim();
+  const text = (await chat(prompt)).trim();
   try {
     const jsonMatch = text.match(/\{[\s\S]*\}/);
     if (jsonMatch) {
@@ -95,12 +91,8 @@ export async function classifyEmail(
       const validCategories: AiCategory[] = ['important', 'task', 'info', 'newsletter', 'promotion', 'other'];
       const validPriorities: AiPriority[] = ['high', 'medium', 'low'];
       return {
-        category: validCategories.includes(parsed.category as AiCategory)
-          ? (parsed.category as AiCategory)
-          : 'other',
-        priority: validPriorities.includes(parsed.priority as AiPriority)
-          ? (parsed.priority as AiPriority)
-          : 'medium',
+        category: validCategories.includes(parsed.category as AiCategory) ? (parsed.category as AiCategory) : 'other',
+        priority: validPriorities.includes(parsed.priority as AiPriority) ? (parsed.priority as AiPriority) : 'medium',
       };
     }
   } catch {}
@@ -128,14 +120,10 @@ export async function smartSearch(
 ${emailSummaries}
 
 ---
-以下のJSON形式で回答してください:
-{
-  "answer": "質問への回答（2〜3文）",
-  "indices": [関連するメールのインデックス番号の配列（最大10件）]
-}`;
+以下のJSON形式のみで回答してください（コードブロック不要）:
+{"answer":"質問への回答（2〜3文）","indices":[関連するメールのインデックス番号の配列（最大10件）]}`;
 
-  const result = await getModel().generateContent(prompt);
-  const text = result.response.text().trim();
+  const text = (await chat(prompt)).trim();
   try {
     const jsonMatch = text.match(/\{[\s\S]*\}/);
     if (jsonMatch) {

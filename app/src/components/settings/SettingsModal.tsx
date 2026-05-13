@@ -2,15 +2,17 @@
 import { useState, useEffect } from 'react';
 import {
   X, User, Shield, Sparkles, Bell, Trash2, Plus,
-  CheckCircle, AlertCircle, Loader2, Moon, Sun, Monitor,
+  CheckCircle, Loader2, Moon, Sun, Monitor,
+  Filter, FolderPlus, FolderOpen, ChevronDown, ChevronUp,
 } from 'lucide-react';
 import { useAccountStore } from '@/store/accountStore';
+import { useMailStore } from '@/store/mailStore';
 import { useUIStore } from '@/store/uiStore';
 import { api } from '@/lib/ipc';
-import { BlockEntry, Settings } from '@shared/types';
+import { BlockEntry, Settings, FilterRule, FilterCondition } from '@/types/shared';
 import { cn } from '@/lib/utils';
 
-type Tab = 'accounts' | 'ai' | 'blocklist' | 'notifications' | 'appearance';
+type Tab = 'accounts' | 'ai' | 'blocklist' | 'filters' | 'folders' | 'notifications' | 'appearance';
 
 export function SettingsModal() {
   const { closeModal } = useUIStore();
@@ -18,6 +20,8 @@ export function SettingsModal() {
 
   const tabs: { id: Tab; label: string; icon: React.ReactNode }[] = [
     { id: 'accounts', label: 'アカウント', icon: <User size={15} /> },
+    { id: 'filters', label: 'フィルター', icon: <Filter size={15} /> },
+    { id: 'folders', label: 'フォルダ管理', icon: <FolderOpen size={15} /> },
     { id: 'ai', label: 'AI設定', icon: <Sparkles size={15} /> },
     { id: 'blocklist', label: 'ブロックリスト', icon: <Shield size={15} /> },
     { id: 'notifications', label: '通知', icon: <Bell size={15} /> },
@@ -57,6 +61,8 @@ export function SettingsModal() {
         {/* Content */}
         <div className="flex-1 overflow-y-auto scrollbar-thin">
           {tab === 'accounts' && <AccountsTab />}
+          {tab === 'filters' && <FiltersTab />}
+          {tab === 'folders' && <FoldersTab />}
           {tab === 'ai' && <AiTab />}
           {tab === 'blocklist' && <BlocklistTab />}
           {tab === 'notifications' && <NotificationsTab />}
@@ -139,24 +145,24 @@ function AiTab() {
     <div className="p-6">
       <h3 className="text-base font-semibold text-gray-900 dark:text-white mb-1">AI設定</h3>
       <p className="text-xs text-gray-500 dark:text-gray-400 mb-4">
-        Google Gemini 1.5 Flash APIを使用します。<br />
-        APIキーは <a href="https://aistudio.google.com" className="text-blue-500 underline" target="_blank" rel="noreferrer">Google AI Studio</a> で無料取得できます（1日100万トークン無料）。
+        OpenAI (gpt-4o-mini) を使用します。<br />
+        APIキーは <a href="https://platform.openai.com/api-keys" className="text-blue-500 underline" target="_blank" rel="noreferrer">OpenAI Platform</a> で取得できます。新規登録で $5 の無料クレジットがあります。
       </p>
 
       <div className="mb-4 p-3 bg-amber-50 dark:bg-amber-900/20 rounded-lg border border-amber-200 dark:border-amber-800">
         <p className="text-xs text-amber-700 dark:text-amber-300">
-          ⚠️ AI機能を有効にすると、メール本文がGoogle APIに送信されます。プライバシーポリシーをご確認ください。
+          ⚠️ AI機能を有効にすると、メール本文がOpenAI APIに送信されます。プライバシーポリシーをご確認ください。
         </p>
       </div>
 
       <div className="space-y-3">
         <div>
-          <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Gemini APIキー</label>
+          <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">OpenAI APIキー</label>
           <input
             type="password"
             value={apiKey}
             onChange={(e) => setApiKey(e.target.value)}
-            placeholder="AIzaSy..."
+            placeholder="sk-..."
             className="w-full px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/20"
           />
         </div>
@@ -357,6 +363,301 @@ function AppearanceTab() {
             </button>
           ))}
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Filters Tab ────────────────────────────────────────────────────────────
+
+const FIELD_LABELS: Record<string, string> = { from: '差出人', to: '宛先', subject: '件名', body: '本文' };
+const OP_LABELS: Record<string, string> = { contains: 'を含む', equals: '完全一致', startsWith: 'で始まる', endsWith: 'で終わる' };
+
+function FiltersTab() {
+  const { selectedAccountId } = useAccountStore();
+  const { folders } = useMailStore();
+  const [filters, setFilters] = useState<FilterRule[]>([]);
+  const [editing, setEditing] = useState<FilterRule | null>(null);
+  const [creating, setCreating] = useState(false);
+
+  useEffect(() => {
+    if (selectedAccountId) api.filters.list(selectedAccountId).then((r: FilterRule[]) => setFilters(r));
+  }, [selectedAccountId]);
+
+  async function handleDelete(id: string) {
+    if (!confirm('このフィルターを削除しますか？')) return;
+    await api.filters.delete(id);
+    setFilters((prev) => prev.filter((f) => f.id !== id));
+  }
+
+  async function handleToggle(f: FilterRule) {
+    await api.filters.update(f.id, { active: !f.active });
+    setFilters((prev) => prev.map((x) => x.id === f.id ? { ...x, active: !f.active } : x));
+  }
+
+  async function handleSave(data: Omit<FilterRule, 'id' | 'accountId' | 'createdAt'>) {
+    if (!selectedAccountId) return;
+    if (editing) {
+      await api.filters.update(editing.id, data);
+      setFilters((prev) => prev.map((x) => x.id === editing.id ? { ...x, ...data } : x));
+      setEditing(null);
+    } else {
+      const created = await api.filters.create(selectedAccountId, data) as FilterRule;
+      setFilters((prev) => [...prev, created]);
+      setCreating(false);
+    }
+  }
+
+  const allFolders = folders.map((f) => f.path);
+
+  if (creating || editing) {
+    return (
+      <FilterForm
+        initial={editing ?? undefined}
+        folders={allFolders}
+        onSave={handleSave}
+        onCancel={() => { setCreating(false); setEditing(null); }}
+      />
+    );
+  }
+
+  return (
+    <div className="p-6">
+      <div className="flex items-center justify-between mb-4">
+        <div>
+          <h3 className="text-base font-semibold text-gray-900 dark:text-white">フィルタールール</h3>
+          <p className="text-xs text-gray-500 mt-0.5">条件に一致する受信メールを自動振り分け・既読化します</p>
+        </div>
+        <button
+          onClick={() => setCreating(true)}
+          className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg bg-blue-600 hover:bg-blue-700 text-white"
+        >
+          <Plus size={13} /> 新規ルール
+        </button>
+      </div>
+
+      {filters.length === 0 ? (
+        <div className="text-center py-10 text-gray-400">
+          <Filter size={28} className="mx-auto mb-2 opacity-40" />
+          <p className="text-sm">フィルタールールがありません</p>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {filters.map((f) => (
+            <div key={f.id} className={cn('p-3 rounded-lg border transition-colors', f.active ? 'border-gray-200 dark:border-gray-700' : 'border-dashed border-gray-300 dark:border-gray-600 opacity-60')}>
+              <div className="flex items-start justify-between gap-2">
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className="text-sm font-medium text-gray-800 dark:text-gray-200 truncate">{f.name || 'ルール'}</span>
+                    <span className={cn('text-xs px-1.5 py-0.5 rounded-full', f.active ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' : 'bg-gray-100 text-gray-500 dark:bg-gray-700')}>
+                      {f.active ? '有効' : '無効'}
+                    </span>
+                  </div>
+                  <div className="text-xs text-gray-500 dark:text-gray-400 space-y-0.5">
+                    {f.conditions.map((c, i) => (
+                      <span key={i} className="mr-2">{FIELD_LABELS[c.field]} {OP_LABELS[c.operator]} 「{c.value}」</span>
+                    ))}
+                  </div>
+                  <div className="flex gap-2 mt-1.5 flex-wrap">
+                    {f.actionFolder && <span className="text-xs bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 px-2 py-0.5 rounded-full">→ {f.actionFolder}</span>}
+                    {f.actionMarkRead && <span className="text-xs bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 px-2 py-0.5 rounded-full">既読</span>}
+                    {f.actionStarred && <span className="text-xs bg-yellow-50 dark:bg-yellow-900/20 text-yellow-700 dark:text-yellow-300 px-2 py-0.5 rounded-full">★スター</span>}
+                  </div>
+                </div>
+                <div className="flex items-center gap-1 flex-shrink-0">
+                  <button onClick={() => handleToggle(f)} className="p-1.5 rounded hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-400 text-xs">{f.active ? '無効化' : '有効化'}</button>
+                  <button onClick={() => setEditing(f)} className="p-1.5 rounded hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-400 text-xs">編集</button>
+                  <button onClick={() => handleDelete(f.id)} className="p-1.5 rounded hover:bg-red-50 dark:hover:bg-red-900/20 text-red-400"><Trash2 size={13} /></button>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function FilterForm({ initial, folders, onSave, onCancel }: {
+  initial?: FilterRule;
+  folders: string[];
+  onSave: (data: Omit<FilterRule, 'id' | 'accountId' | 'createdAt'>) => Promise<void>;
+  onCancel: () => void;
+}) {
+  const [name, setName] = useState(initial?.name ?? '');
+  const [conditionType, setConditionType] = useState<'all' | 'any'>(initial?.conditionType ?? 'any');
+  const [conditions, setConditions] = useState<FilterCondition[]>(
+    initial?.conditions.length ? initial.conditions : [{ field: 'from', operator: 'contains', value: '' }]
+  );
+  const [actionFolder, setActionFolder] = useState(initial?.actionFolder ?? '');
+  const [actionMarkRead, setActionMarkRead] = useState(initial?.actionMarkRead ?? false);
+  const [actionStarred, setActionStarred] = useState(initial?.actionStarred ?? false);
+  const [saving, setSaving] = useState(false);
+
+  function updateCondition(i: number, patch: Partial<FilterCondition>) {
+    setConditions((prev) => prev.map((c, idx) => idx === i ? { ...c, ...patch } : c));
+  }
+
+  async function handleSubmit() {
+    if (conditions.some((c) => !c.value.trim())) return;
+    setSaving(true);
+    await onSave({ name, conditionType, conditions, actionFolder: actionFolder || null, actionMarkRead, actionStarred, active: true });
+    setSaving(false);
+  }
+
+  return (
+    <div className="p-6">
+      <h3 className="text-base font-semibold text-gray-900 dark:text-white mb-4">{initial ? 'フィルター編集' : '新規フィルター'}</h3>
+      <div className="space-y-4">
+        <div>
+          <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">ルール名（任意）</label>
+          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="例: ニュースレター" className="w-full px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white outline-none focus:border-blue-500" />
+        </div>
+
+        <div>
+          <div className="flex items-center justify-between mb-2">
+            <label className="text-xs font-medium text-gray-600 dark:text-gray-400">条件</label>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-gray-500">マッチ:</span>
+              <select value={conditionType} onChange={(e) => setConditionType(e.target.value as 'all' | 'any')} className="text-xs px-2 py-1 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white">
+                <option value="any">いずれか (OR)</option>
+                <option value="all">すべて (AND)</option>
+              </select>
+            </div>
+          </div>
+          <div className="space-y-2">
+            {conditions.map((c, i) => (
+              <div key={i} className="flex items-center gap-2">
+                <select value={c.field} onChange={(e) => updateCondition(i, { field: e.target.value as FilterCondition['field'] })} className="text-xs px-2 py-1.5 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white">
+                  {Object.entries(FIELD_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                </select>
+                <select value={c.operator} onChange={(e) => updateCondition(i, { operator: e.target.value as FilterCondition['operator'] })} className="text-xs px-2 py-1.5 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white">
+                  {Object.entries(OP_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                </select>
+                <input value={c.value} onChange={(e) => updateCondition(i, { value: e.target.value })} placeholder="値" className="flex-1 text-xs px-2 py-1.5 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white outline-none focus:border-blue-500" />
+                {conditions.length > 1 && <button onClick={() => setConditions((prev) => prev.filter((_, idx) => idx !== i))} className="text-red-400 hover:text-red-600"><Trash2 size={13} /></button>}
+              </div>
+            ))}
+            <button onClick={() => setConditions((prev) => [...prev, { field: 'from', operator: 'contains', value: '' }])} className="text-xs text-blue-500 hover:text-blue-600 flex items-center gap-1">
+              <Plus size={12} /> 条件を追加
+            </button>
+          </div>
+        </div>
+
+        <div>
+          <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-2">アクション</label>
+          <div className="space-y-2">
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-gray-600 dark:text-gray-400 w-24">フォルダに移動</span>
+              <select value={actionFolder} onChange={(e) => setActionFolder(e.target.value)} className="flex-1 text-xs px-2 py-1.5 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white">
+                <option value="">移動しない</option>
+                {folders.map((f) => <option key={f} value={f}>{f}</option>)}
+              </select>
+            </div>
+            <label className="flex items-center gap-2 text-xs text-gray-700 dark:text-gray-300 cursor-pointer">
+              <input type="checkbox" checked={actionMarkRead} onChange={(e) => setActionMarkRead(e.target.checked)} className="rounded" /> 既読にする
+            </label>
+            <label className="flex items-center gap-2 text-xs text-gray-700 dark:text-gray-300 cursor-pointer">
+              <input type="checkbox" checked={actionStarred} onChange={(e) => setActionStarred(e.target.checked)} className="rounded" /> スターを付ける
+            </label>
+          </div>
+        </div>
+
+        <div className="flex gap-2 pt-2">
+          <button onClick={handleSubmit} disabled={saving} className="flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm">
+            {saving && <Loader2 size={13} className="animate-spin" />} 保存
+          </button>
+          <button onClick={onCancel} className="px-4 py-2 rounded-lg border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 text-sm hover:bg-gray-50 dark:hover:bg-gray-700">キャンセル</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Folders Tab ─────────────────────────────────────────────────────────────
+
+function FoldersTab() {
+  const { selectedAccountId } = useAccountStore();
+  const { folders, loadFolders } = useMailStore();
+  const [newName, setNewName] = useState('');
+  const [creating, setCreating] = useState(false);
+  const [deleting, setDeleting] = useState<string | null>(null);
+  const [error, setError] = useState('');
+
+  const customFolders = folders.filter((f) =>
+    !['INBOX', 'Sent', 'Drafts', 'Trash', 'Starred', 'Spam', 'Junk'].includes(f.path) &&
+    !f.path.startsWith('[Gmail]')
+  );
+  const systemFolders = folders.filter((f) =>
+    ['INBOX', 'Sent', 'Drafts', 'Trash', 'Spam', 'Junk'].includes(f.path) ||
+    f.path.startsWith('[Gmail]')
+  );
+
+  async function handleCreate() {
+    if (!newName.trim() || !selectedAccountId) return;
+    setCreating(true);
+    setError('');
+    try {
+      await api.folders.create(selectedAccountId, newName.trim());
+      await loadFolders(selectedAccountId);
+      setNewName('');
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setCreating(false);
+    }
+  }
+
+  async function handleDelete(path: string) {
+    if (!selectedAccountId) return;
+    if (!confirm(`「${path}」を削除しますか？メールボックス内のメールも削除されます。`)) return;
+    setDeleting(path);
+    try {
+      await api.folders.delete(selectedAccountId, path);
+      await loadFolders(selectedAccountId);
+    } catch (err) {
+      alert((err as Error).message);
+    } finally {
+      setDeleting(null);
+    }
+  }
+
+  return (
+    <div className="p-6">
+      <h3 className="text-base font-semibold text-gray-900 dark:text-white mb-1">フォルダ管理</h3>
+      <p className="text-xs text-gray-500 mb-4">Gmail ラベルとして作成されます</p>
+
+      <div className="flex gap-2 mb-5">
+        <input value={newName} onChange={(e) => setNewName(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleCreate()} placeholder="新しいフォルダ名" className="flex-1 px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white outline-none focus:border-blue-500" />
+        <button onClick={handleCreate} disabled={creating || !newName.trim()} className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm">
+          {creating ? <Loader2 size={13} className="animate-spin" /> : <FolderPlus size={13} />} 作成
+        </button>
+      </div>
+      {error && <p className="text-xs text-red-500 mb-3">{error}</p>}
+
+      {customFolders.length > 0 && (
+        <>
+          <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">カスタムフォルダ</p>
+          <div className="space-y-1 mb-4">
+            {customFolders.map((f) => (
+              <div key={f.path} className="flex items-center justify-between px-3 py-2 rounded-lg border border-gray-200 dark:border-gray-700">
+                <span className="text-sm text-gray-800 dark:text-gray-200">{f.name}</span>
+                <button onClick={() => handleDelete(f.path)} disabled={deleting === f.path} className="p-1 text-red-400 hover:text-red-600 disabled:opacity-40">
+                  {deleting === f.path ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}
+                </button>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+
+      <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">システムフォルダ</p>
+      <div className="space-y-1">
+        {systemFolders.map((f) => (
+          <div key={f.path} className="flex items-center px-3 py-2 rounded-lg bg-gray-50 dark:bg-gray-800">
+            <span className="text-sm text-gray-500 dark:text-gray-400">{f.path}</span>
+          </div>
+        ))}
       </div>
     </div>
   );

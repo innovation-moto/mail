@@ -108,6 +108,7 @@ export interface UpsertEmailData {
   bodyHtml: string;
   date: number;
   isRead: boolean;
+  isStarred?: boolean;
   hasAttachments: boolean;
   threadId?: string;
 }
@@ -118,10 +119,11 @@ export function upsertEmail(data: UpsertEmailData): void {
     INSERT INTO emails (
       id, account_id, uid, message_id, folder, from_address, from_name,
       to_addresses, cc_addresses, subject, body_text, body_html,
-      date, is_read, has_attachments, thread_id, synced_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      date, is_read, is_starred, has_attachments, thread_id, synced_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       is_read = excluded.is_read,
+      is_starred = excluded.is_starred,
       synced_at = excluded.synced_at
   `).run(
     data.id,
@@ -138,6 +140,7 @@ export function upsertEmail(data: UpsertEmailData): void {
     data.bodyHtml,
     data.date,
     data.isRead ? 1 : 0,
+    data.isStarred ? 1 : 0,
     data.hasAttachments ? 1 : 0,
     data.threadId ?? null,
     Date.now(),
@@ -196,6 +199,76 @@ export function getUnreadCount(accountId: string, folder: string): number {
     WHERE account_id = ? AND folder = ? AND is_read = 0 AND is_deleted = 0
   `).get(accountId, folder) as { count: number };
   return row.count;
+}
+
+export function getAllFolderUnreadCounts(accountId: string): Record<string, number> {
+  const db = getDb();
+  const rows = db.prepare(`
+    SELECT folder, COUNT(*) as count FROM emails
+    WHERE account_id = ? AND is_read = 0 AND is_deleted = 0
+    GROUP BY folder
+  `).all(accountId) as { folder: string; count: number }[];
+  return Object.fromEntries(rows.map((r) => [r.folder, r.count]));
+}
+
+export function getMaxUid(accountId: string, folder: string): number {
+  const db = getDb();
+  const row = db.prepare(`
+    SELECT MAX(uid) as max_uid FROM emails
+    WHERE account_id = ? AND folder = ? AND is_deleted = 0
+  `).get(accountId, folder) as { max_uid: number | null };
+  const result = row.max_uid ?? 0;
+  console.log(`[db] getMaxUid(${folder}) = ${result}`);
+  return result;
+}
+
+export function getEmailUidsForFolder(
+  accountId: string,
+  folder: string,
+  limit = 200,
+): { id: string; uid: number; isRead: boolean; isStarred: boolean }[] {
+  const db = getDb();
+  const rows = db.prepare(`
+    SELECT id, uid, is_read, is_starred FROM emails
+    WHERE account_id = ? AND folder = ? AND is_deleted = 0
+    ORDER BY uid DESC LIMIT ?
+  `).all(accountId, folder, limit) as { id: string; uid: number; is_read: number; is_starred: number }[];
+  return rows.map((r) => ({
+    id: r.id,
+    uid: r.uid,
+    isRead: r.is_read === 1,
+    isStarred: r.is_starred === 1,
+  }));
+}
+
+export function updateEmailFlags(id: string, isRead: boolean, isStarred: boolean): void {
+  getDb().prepare(
+    'UPDATE emails SET is_read = ?, is_starred = ? WHERE id = ?',
+  ).run(isRead ? 1 : 0, isStarred ? 1 : 0, id);
+}
+
+export function saveAttachments(
+  emailId: string,
+  attachments: Array<{ filename: string; contentType: string; size: number; content: ArrayBuffer }>,
+): void {
+  const db = getDb();
+  const stmt = db.prepare(`
+    INSERT OR IGNORE INTO attachments (id, email_id, filename, content_type, size, content)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `);
+  attachments.forEach((a, i) => {
+    const id = `${emailId}-att-${i}`;
+    stmt.run(id, emailId, a.filename, a.contentType, a.size, Buffer.from(a.content));
+  });
+}
+
+export function getAttachmentContent(attachmentId: string): { filename: string; contentType: string; content: Buffer } | null {
+  const db = getDb();
+  const row = db.prepare('SELECT filename, content_type, content FROM attachments WHERE id = ?').get(attachmentId) as
+    | { filename: string; content_type: string; content: Buffer }
+    | undefined;
+  if (!row) return null;
+  return { filename: row.filename, contentType: row.content_type, content: row.content };
 }
 
 export function getRecentEmailsForSearch(accountId: string, limit = 200): Email[] {

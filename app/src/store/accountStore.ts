@@ -1,6 +1,6 @@
 'use client';
 import { create } from 'zustand';
-import { Account, AccountConfig, TestConnectionResult } from '@shared/types';
+import { Account, AccountConfig, TestConnectionResult } from '@/types/shared';
 import { api } from '@/lib/ipc';
 
 interface AccountState {

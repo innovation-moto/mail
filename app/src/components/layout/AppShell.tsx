@@ -14,7 +14,7 @@ import { SetupWizard } from '../settings/SetupWizard';
 
 export function AppShell() {
   const { accounts, loadAccounts, selectedAccountId } = useAccountStore();
-  const { loadEmails, loadFolders } = useMailStore();
+  const { loadEmails, loadFolders, syncEmails, loadUnreadCounts } = useMailStore();
   const { theme, modal, applyTheme } = useUIStore();
   const [initialized, setInitialized] = useState(false);
 
@@ -39,7 +39,12 @@ export function AppShell() {
   useEffect(() => {
     if (!selectedAccountId) return;
     loadFolders(selectedAccountId);
-    loadEmails(selectedAccountId, 'INBOX');
+    loadUnreadCounts(selectedAccountId);
+    // まずDBから即座に表示
+    loadEmails(selectedAccountId, 'INBOX').then(() => {
+      // その後バックグラウンドでIMAPと同期して最新メールを取得
+      syncEmails(selectedAccountId).catch(() => {});
+    });
   }, [selectedAccountId]);
 
   useEffect(() => {

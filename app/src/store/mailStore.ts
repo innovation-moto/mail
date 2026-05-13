@@ -1,6 +1,6 @@
 'use client';
 import { create } from 'zustand';
-import { Email, Folder, ComposeData, SyncResult } from '@shared/types';
+import { Email, Folder, ComposeData, SyncResult } from '@/types/shared';
 import { api } from '@/lib/ipc';
 
 interface MailState {
@@ -15,6 +15,9 @@ interface MailState {
   isSmartSearch: boolean;
   smartSearchAnswer: string;
   error: string | null;
+  inboxUnreadCount: number;
+  folderUnreadCounts: Record<string, number>;
+  loadUnreadCounts: (accountId: string) => Promise<void>;
 
   loadFolders: (accountId: string) => Promise<void>;
   loadEmails: (accountId: string, folder?: string) => Promise<void>;
@@ -45,6 +48,8 @@ export const useMailStore = create<MailState>((set, get) => ({
   isSmartSearch: false,
   smartSearchAnswer: '',
   error: null,
+  inboxUnreadCount: 0,
+  folderUnreadCounts: {},
 
   selectedEmail: () => {
     const { emails, selectedEmailId, searchResults } = get();
@@ -76,10 +81,21 @@ export const useMailStore = create<MailState>((set, get) => ({
     set({ loading: true, error: null });
     try {
       const emails = await api.mail.fetchEmails(accountId, f, 50, 0);
-      set({ emails, loading: false, selectedFolder: f });
+      const unreadCount = f === 'INBOX' ? emails.filter((e) => !e.isRead).length : get().inboxUnreadCount;
+      set({ emails, loading: false, selectedFolder: f, inboxUnreadCount: unreadCount });
     } catch (err) {
       set({ loading: false, error: (err as Error).message });
     }
+  },
+
+  loadUnreadCounts: async (accountId) => {
+    try {
+      const counts = await api.mail.getUnreadCounts(accountId);
+      set({
+        folderUnreadCounts: counts,
+        inboxUnreadCount: counts['INBOX'] ?? 0,
+      });
+    } catch {}
   },
 
   selectEmail: (id) => set({ selectedEmailId: id }),
@@ -90,9 +106,14 @@ export const useMailStore = create<MailState>((set, get) => ({
     set({ syncing: true });
     try {
       const result = await api.mail.sync(accountId, get().selectedFolder);
-      if (result.added > 0) {
-        await get().loadEmails(accountId);
-      }
+      // スピナーを出さずサイレントにリロード
+      const f = get().selectedFolder;
+      try {
+        const emails = await api.mail.fetchEmails(accountId, f, 50, 0);
+        set({ emails });
+      } catch {}
+      // 全フォルダの未読数を更新
+      get().loadUnreadCounts(accountId).catch(() => {});
       return result;
     } finally {
       set({ syncing: false });
@@ -105,6 +126,12 @@ export const useMailStore = create<MailState>((set, get) => ({
 
   markRead: async (emailId, isRead) => {
     get().updateEmailLocally(emailId, { isRead });
+    const folder = get().selectedFolder;
+    const unreadCount = get().emails.filter((e) => !e.isRead).length;
+    set((s) => ({
+      inboxUnreadCount: folder === 'INBOX' ? unreadCount : s.inboxUnreadCount,
+      folderUnreadCounts: { ...s.folderUnreadCounts, [folder]: unreadCount },
+    }));
     await api.mail.markRead(emailId, isRead);
   },
 

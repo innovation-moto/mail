@@ -1,18 +1,18 @@
 'use client';
-import { useState, useCallback } from 'react';
-import { Search, Sparkles, X } from 'lucide-react';
+import { useState } from 'react';
+import { Search, Sparkles, X, RefreshCw, Paperclip, ShieldBan } from 'lucide-react';
 import { useAccountStore } from '@/store/accountStore';
 import { useMailStore } from '@/store/mailStore';
-import { Email } from '@shared/types';
+import { Email } from '@/types/shared';
 import { cn, formatEmailDate, truncate, getInitials, getAvatarColor, PRIORITY_COLORS } from '@/lib/utils';
 import { api } from '@/lib/ipc';
 
 export function MailList() {
   const { selectedAccountId } = useAccountStore();
   const {
-    emails, selectedEmailId, selectedFolder, loading,
+    emails, selectedEmailId, selectedFolder, loading, syncing,
     selectEmail, markRead, searchResults, searchQuery, isSmartSearch,
-    smartSearchAnswer, clearSearch, search, smartSearch,
+    smartSearchAnswer, clearSearch, search, smartSearch, syncEmails,
   } = useMailStore();
   const [query, setQuery] = useState('');
   const [aiEnabled, setAiEnabled] = useState(false);
@@ -50,7 +50,17 @@ export function MailList() {
     <div className="flex flex-col w-80 flex-shrink-0 h-screen border-r border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900">
       {/* Header */}
       <div className="px-4 pt-8 pb-3 flex-shrink-0">
-        <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-3">{title}</h2>
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-lg font-semibold text-gray-900 dark:text-white">{title}</h2>
+          <button
+            onClick={() => selectedAccountId && syncEmails(selectedAccountId)}
+            disabled={syncing || loading}
+            className="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 disabled:opacity-40 transition-colors"
+            title="メールを更新"
+          >
+            <RefreshCw size={15} className={cn(syncing && 'animate-spin')} />
+          </button>
+        </div>
 
         {/* Search bar */}
         <form onSubmit={handleSearch} className="relative">
@@ -125,7 +135,22 @@ function EmailItem({
   selected: boolean;
   onClick: () => void;
 }) {
+  const { selectedAccountId } = useAccountStore();
+  const [hovered, setHovered] = useState(false);
+
+  async function handleQuickBlock(e: React.MouseEvent) {
+    e.stopPropagation();
+    if (!selectedAccountId) return;
+    if (!confirm(`${email.from.address} をブロックしますか？`)) return;
+    await api.blocklist.add(selectedAccountId, email.from.address, 'address');
+  }
+
   return (
+    <div
+      className="relative group"
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+    >
     <button
       onClick={onClick}
       className={cn(
@@ -162,6 +187,9 @@ function EmailItem({
             <span className="text-xs text-gray-400 truncate flex-1">
               {truncate(email.bodyText.replace(/\s+/g, ' '), 60)}
             </span>
+            {email.hasAttachments && (
+              <Paperclip size={11} className="text-gray-400 flex-shrink-0" />
+            )}
             {!email.isRead && (
               <span className="w-2 h-2 rounded-full bg-blue-500 flex-shrink-0" />
             )}
@@ -175,5 +203,17 @@ function EmailItem({
         </div>
       </div>
     </button>
+
+    {/* クイックブロックボタン（ホバー時に表示） */}
+    {hovered && (
+      <button
+        onClick={handleQuickBlock}
+        title="このアドレスをブロック"
+        className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 rounded-lg bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 text-gray-400 hover:text-red-500 hover:border-red-300 shadow-sm transition-colors"
+      >
+        <ShieldBan size={13} />
+      </button>
+    )}
+    </div>
   );
 }

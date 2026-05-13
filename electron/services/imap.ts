@@ -1,12 +1,9 @@
 import { ImapFlow, MailboxLockObject } from 'imapflow';
-import { v4 as uuidv4 } from 'uuid';
-import { Account, Folder, TestConnectionResult } from '../../shared/types';
+import { Account, Folder } from '../../shared/types';
 import { parseRawEmail, ParsedEmail } from './parser';
-import { upsertEmail, UpsertEmailData } from '../db/queries/emails';
+import { upsertEmail, UpsertEmailData, getMaxUid, getEmailUidsForFolder, updateEmailFlags, saveAttachments } from '../db/queries/emails';
 import { isBlocked } from '../db/queries/blocklist';
-import { markDeleted } from '../db/queries/emails';
-
-const clientPool: Map<string, ImapFlow> = new Map();
+import { applyFilters } from '../db/queries/filters';
 
 function createClient(account: Account, password: string): ImapFlow {
   return new ImapFlow({
@@ -16,7 +13,19 @@ function createClient(account: Account, password: string): ImapFlow {
     auth: { user: account.email, pass: password },
     logger: false,
     tls: { rejectUnauthorized: false },
+    connectionTimeout: 30000,
+    socketTimeout: 60000,
+    greetingTimeout: 15000,
+    disableAutoIdle: true,
   });
+}
+
+async function safeLogout(client: ImapFlow): Promise<void> {
+  try {
+    await client.logout();
+  } catch {
+    try { client.close(); } catch {}
+  }
 }
 
 export async function testImapConnection(
@@ -33,12 +42,16 @@ export async function testImapConnection(
     auth: { user: email, pass: password },
     logger: false,
     tls: { rejectUnauthorized: false },
+    connectionTimeout: 15000,
+    socketTimeout: 20000,
+    greetingTimeout: 15000,
   });
   try {
     await client.connect();
-    await client.logout();
+    await safeLogout(client);
     return { ok: true };
   } catch (err) {
+    try { client.close(); } catch {}
     return { ok: false, error: (err as Error).message };
   }
 }
@@ -60,7 +73,7 @@ export async function fetchFolders(account: Account, password: string): Promise<
       });
     }
   } finally {
-    await client.logout();
+    await safeLogout(client);
   }
   return folders;
 }
@@ -72,83 +85,193 @@ export async function syncFolder(
   limit = 50,
 ): Promise<{ added: number; blocked: number }> {
   const client = createClient(account, password);
-  await client.connect();
   let lock: MailboxLockObject | null = null;
   let added = 0;
   let blocked = 0;
 
   try {
+    await client.connect();
     lock = await client.getMailboxLock(folder);
     const mailbox = client.mailbox;
-    if (!mailbox || mailbox.exists === 0) return { added, blocked };
+    if (!mailbox || mailbox.exists === 0) {
+      console.log(`[sync] ${folder}: empty mailbox`);
+      return { added, blocked };
+    }
 
-    const total = mailbox.exists;
-    const startSeq = Math.max(1, total - limit + 1);
+    console.log(`[sync] ${folder}: exists=${mailbox.exists}`);
 
-    for await (const msg of client.fetch(`${startSeq}:*`, {
-      uid: true,
-      flags: true,
-      envelope: true,
-      source: true,
-    })) {
+    const lastKnownUid = getMaxUid(account.id, folder);
+    console.log(`[sync] ${folder}: lastKnownUid=${lastKnownUid}`);
+
+    let fetchRange: string;
+    let fetchOpts: { uid: boolean } | undefined;
+
+    if (lastKnownUid === 0) {
+      // First sync: fetch latest N messages by sequence number
+      const total = mailbox.exists;
+      const startSeq = Math.max(1, total - limit + 1);
+      fetchRange = `${startSeq}:*`;
+      fetchOpts = undefined;
+      console.log(`[sync] first sync, seq ${fetchRange}`);
+    } else {
+      // Incremental: fetch only messages with UID > lastKnownUid
+      fetchRange = `${lastKnownUid + 1}:*`;
+      fetchOpts = { uid: true };
+      console.log(`[sync] incremental, uid ${fetchRange}`);
+    }
+
+    let count = 0;
+    for await (const msg of client.fetch(
+      fetchRange,
+      { uid: true, flags: true, source: true },
+      fetchOpts,
+    )) {
       if (!msg.source) continue;
+      if (count >= limit) break;
+      count++;
+
+      // IMAP仕様: '288:*' で * が287の場合、サーバーは287を返す。スキップする。
+      if (lastKnownUid > 0 && msg.uid <= lastKnownUid) {
+        console.log(`[sync] skip uid=${msg.uid} (already known)`);
+        continue;
+      }
+      console.log(`[sync] msg uid=${msg.uid} seq=${msg.seq}`);
 
       let parsed: ParsedEmail;
       try {
         parsed = await parseRawEmail(msg.source);
-      } catch {
+      } catch (e) {
+        console.error('[sync] parse error:', e);
         continue;
       }
 
+      // ブロックリスト判定
       if (isBlocked(account.id, parsed.from.address)) {
-        const id = `${account.id}-${msg.uid}-${folder}`;
-        const emailData: UpsertEmailData = {
-          id,
-          accountId: account.id,
-          uid: msg.uid,
-          messageId: parsed.messageId,
-          folder: 'Trash',
-          from: parsed.from,
-          to: parsed.to,
-          cc: parsed.cc,
-          subject: parsed.subject,
-          bodyText: parsed.bodyText,
-          bodyHtml: parsed.bodyHtml,
-          date: parsed.date,
-          isRead: true,
-          hasAttachments: parsed.hasAttachments,
-        };
-        upsertEmail(emailData);
+        upsertEmail({
+          id: `${account.id}-${msg.uid}-${folder}`,
+          accountId: account.id, uid: msg.uid,
+          messageId: parsed.messageId, folder: 'Trash',
+          from: parsed.from, to: parsed.to, cc: parsed.cc,
+          subject: parsed.subject, bodyText: parsed.bodyText,
+          bodyHtml: parsed.bodyHtml, date: parsed.date,
+          isRead: true, hasAttachments: parsed.hasAttachments,
+        });
         blocked++;
         continue;
       }
 
-      const id = `${account.id}-${msg.uid}-${folder}`;
-      const emailData: UpsertEmailData = {
-        id,
-        accountId: account.id,
-        uid: msg.uid,
-        messageId: parsed.messageId,
-        folder,
-        from: parsed.from,
-        to: parsed.to,
-        cc: parsed.cc,
+      // フィルタールール適用
+      const filterResult = applyFilters(account.id, {
+        from: parsed.from.address,
+        to: parsed.to.map((t) => t.address).join(' '),
         subject: parsed.subject,
-        bodyText: parsed.bodyText,
-        bodyHtml: parsed.bodyHtml,
-        date: parsed.date,
-        isRead: msg.flags?.has('\\Seen') ?? false,
+        body: parsed.bodyText,
+      });
+
+      const targetFolder = filterResult?.folder ?? folder;
+      const isRead = filterResult?.markRead ? true : (msg.flags?.has('\\Seen') ?? false);
+      const isStarred = filterResult?.starred ?? false;
+
+      // フィルターでフォルダ移動がある場合 IMAP サーバー側も移動
+      if (filterResult?.folder && filterResult.folder !== folder) {
+        try {
+          await client.messageMove({ uid: msg.uid }, filterResult.folder, { uid: true });
+        } catch {
+          // 移動失敗しても DB には保存する
+        }
+      }
+
+      const id = `${account.id}-${msg.uid}-${folder}`;
+      console.log(`[sync] storing id=${id} folder=${targetFolder} subject="${parsed.subject}"`);
+      upsertEmail({
+        id,
+        accountId: account.id, uid: msg.uid,
+        messageId: parsed.messageId, folder: targetFolder,
+        from: parsed.from, to: parsed.to, cc: parsed.cc,
+        subject: parsed.subject, bodyText: parsed.bodyText,
+        bodyHtml: parsed.bodyHtml, date: parsed.date,
+        isRead, isStarred,
         hasAttachments: parsed.hasAttachments,
-      };
-      upsertEmail(emailData);
+      });
+
+      // 添付ファイルをDBに保存
+      if (parsed.attachments.length > 0) {
+        saveAttachments(id, parsed.attachments);
+      }
+
       added++;
     }
+
+    console.log(`[sync] ${folder}: done added=${added} blocked=${blocked} processed=${count}`);
   } finally {
     lock?.release();
-    await client.logout();
+    await safeLogout(client);
   }
 
   return { added, blocked };
+}
+
+export async function fetchAttachmentsForEmail(
+  account: Account,
+  password: string,
+  folder: string,
+  uid: number,
+): Promise<Array<{ filename: string; contentType: string; size: number; content: ArrayBuffer }>> {
+  const client = createClient(account, password);
+  let lock: MailboxLockObject | null = null;
+  try {
+    await client.connect();
+    lock = await client.getMailboxLock(folder);
+    const attachments: Array<{ filename: string; contentType: string; size: number; content: ArrayBuffer }> = [];
+    for await (const msg of client.fetch(String(uid), { uid: true, source: true }, { uid: true })) {
+      if (!msg.source) break;
+      const parsed = await parseRawEmail(msg.source);
+      attachments.push(...parsed.attachments);
+      break;
+    }
+    return attachments;
+  } finally {
+    lock?.release();
+    await safeLogout(client);
+  }
+}
+
+export async function syncFlags(
+  account: Account,
+  password: string,
+  folder = 'INBOX',
+): Promise<number> {
+  const existing = getEmailUidsForFolder(account.id, folder, 200);
+  if (existing.length === 0) return 0;
+
+  const client = createClient(account, password);
+  let lock: MailboxLockObject | null = null;
+  let updated = 0;
+
+  try {
+    await client.connect();
+    lock = await client.getMailboxLock(folder);
+
+    const uidMap = new Map(existing.map((e) => [e.uid, e]));
+    const uids = existing.map((e) => e.uid);
+    const uidRange = uids.join(',');
+
+    for await (const msg of client.fetch(uidRange, { uid: true, flags: true }, { uid: true })) {
+      const entry = uidMap.get(msg.uid);
+      if (!entry) continue;
+      const isRead = msg.flags?.has('\\Seen') ?? false;
+      const isStarred = msg.flags?.has('\\Flagged') ?? false;
+      if (isRead !== entry.isRead || isStarred !== entry.isStarred) {
+        updateEmailFlags(entry.id, isRead, isStarred);
+        updated++;
+      }
+    }
+  } finally {
+    lock?.release();
+    await safeLogout(client);
+  }
+
+  return updated;
 }
 
 export async function imapMarkRead(
@@ -169,7 +292,7 @@ export async function imapMarkRead(
     }
   } finally {
     lock.release();
-    await client.logout();
+    await safeLogout(client);
   }
 }
 
@@ -187,7 +310,27 @@ export async function imapDeleteEmail(
     await client.messageMove({ uid }, trashFolder, { uid: true });
   } finally {
     lock.release();
-    await client.logout();
+    await safeLogout(client);
+  }
+}
+
+export async function createFolder(account: Account, password: string, folderPath: string): Promise<void> {
+  const client = createClient(account, password);
+  try {
+    await client.connect();
+    await client.mailboxCreate(folderPath);
+  } finally {
+    await safeLogout(client);
+  }
+}
+
+export async function deleteFolder(account: Account, password: string, folderPath: string): Promise<void> {
+  const client = createClient(account, password);
+  try {
+    await client.connect();
+    await client.mailboxDelete(folderPath);
+  } finally {
+    await safeLogout(client);
   }
 }
 
@@ -205,6 +348,6 @@ export async function imapMoveEmail(
     await client.messageMove({ uid }, toFolder, { uid: true });
   } finally {
     lock.release();
-    await client.logout();
+    await safeLogout(client);
   }
 }

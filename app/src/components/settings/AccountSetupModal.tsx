@@ -3,7 +3,7 @@ import { useState } from 'react';
 import { X, CheckCircle, AlertCircle, Loader2 } from 'lucide-react';
 import { useAccountStore } from '@/store/accountStore';
 import { useUIStore } from '@/store/uiStore';
-import { AccountConfig, PROVIDER_PRESETS, TestConnectionResult } from '@shared/types';
+import { AccountConfig, PROVIDER_PRESETS, TestConnectionResult } from '@/types/shared';
 
 const PROVIDERS = [
   { id: 'gmail', name: 'Gmail' },

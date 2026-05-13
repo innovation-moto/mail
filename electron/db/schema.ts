@@ -83,6 +83,20 @@ CREATE TABLE IF NOT EXISTS drafts (
   FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS filters (
+  id TEXT PRIMARY KEY,
+  account_id TEXT NOT NULL,
+  name TEXT NOT NULL DEFAULT '',
+  conditions TEXT NOT NULL DEFAULT '[]',
+  condition_type TEXT NOT NULL DEFAULT 'any',
+  action_folder TEXT,
+  action_mark_read INTEGER NOT NULL DEFAULT 0,
+  action_starred INTEGER NOT NULL DEFAULT 0,
+  active INTEGER NOT NULL DEFAULT 1,
+  created_at INTEGER NOT NULL,
+  FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL

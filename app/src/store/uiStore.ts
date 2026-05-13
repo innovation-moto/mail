@@ -1,6 +1,6 @@
 'use client';
 import { create } from 'zustand';
-import { Email } from '@shared/types';
+import { Email } from '@/types/shared';
 
 type Theme = 'light' | 'dark' | 'system';
 type Modal = 'compose' | 'accountSetup' | 'settings' | null;

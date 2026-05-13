@@ -4,7 +4,7 @@ import { X, Minimize2, Maximize2, Send, Paperclip, Sparkles, ChevronDown } from 
 import { useAccountStore } from '@/store/accountStore';
 import { useMailStore } from '@/store/mailStore';
 import { useUIStore } from '@/store/uiStore';
-import { ComposeData } from '@shared/types';
+import { ComposeData } from '@/types/shared';
 import { cn } from '@/lib/utils';
 
 export function ComposeModal() {

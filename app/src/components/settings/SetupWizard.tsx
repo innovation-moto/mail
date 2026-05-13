@@ -3,7 +3,7 @@ import { useState } from 'react';
 import { Mail, CheckCircle, AlertCircle, Loader2, ChevronRight } from 'lucide-react';
 import { useAccountStore } from '@/store/accountStore';
 import { useUIStore } from '@/store/uiStore';
-import { AccountConfig, PROVIDER_PRESETS, TestConnectionResult } from '@shared/types';
+import { AccountConfig, PROVIDER_PRESETS, TestConnectionResult } from '@/types/shared';
 import { cn } from '@/lib/utils';
 
 const PROVIDERS = [

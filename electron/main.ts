@@ -6,11 +6,18 @@ import { registerMailHandlers } from './ipc/mail';
 import { registerAiHandlers } from './ipc/ai';
 import { registerBlocklistHandlers } from './ipc/blocklist';
 import { registerSettingsHandlers } from './ipc/settings';
+import { registerFilterHandlers } from './ipc/filters';
 import { startSync, stopSync, syncAllAccounts } from './services/sync';
 import { getSetting } from './db/queries/settings';
 import { initGemini } from './services/gemini';
 
 const isDev = !app.isPackaged;
+
+// Prevent unhandled promise rejections (e.g. IMAP socket timeouts) from
+// surfacing as Electron error dialogs. Log them to the console instead.
+process.on('unhandledRejection', (reason) => {
+  console.error('[unhandledRejection]', reason);
+});
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -63,9 +70,10 @@ function initializeApp(): void {
   registerAiHandlers();
   registerBlocklistHandlers();
   registerSettingsHandlers();
+  registerFilterHandlers();
 
-  // Initialize Gemini if API key exists
-  const apiKey = getSetting('gemini_api_key');
+  // Initialize AI if API key exists
+  const apiKey = getSetting('openai_api_key') || getSetting('gemini_api_key');
   if (apiKey) {
     try { initGemini(apiKey); } catch {}
   }

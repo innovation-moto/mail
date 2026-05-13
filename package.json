@@ -6,28 +6,29 @@
   "description": "AI-powered personal mail client",
   "scripts": {
     "dev": "concurrently -n \"next,electron\" -c \"cyan,yellow\" \"npm run dev:next\" \"npm run dev:electron\"",
-    "dev:next": "cd app && next dev -p 3000",
+    "dev:next": "cd app && node_modules/.bin/next dev -p 3000",
     "dev:electron": "wait-on http://localhost:3000 && tsc -p tsconfig.electron.json && cross-env NODE_ENV=development electron .",
     "build": "npm run build:next && npm run build:electron",
-    "build:next": "cd app && next build",
+    "build:next": "cd app && node_modules/.bin/next build",
     "build:electron": "tsc -p tsconfig.electron.json",
     "package": "npm run build && electron-builder",
     "postinstall": "electron-builder install-app-deps"
   },
   "dependencies": {
-    "@google/generative-ai": "^0.21.0",
-    "better-sqlite3": "^9.6.0",
+    "@google/generative-ai": "^0.24.1",
+    "better-sqlite3": "^12.10.0",
     "date-fns": "^3.6.0",
     "imapflow": "^1.0.169",
     "nodemailer": "^6.9.14",
+    "openai": "^6.37.0",
     "postal-mime": "^2.3.0",
     "sanitize-html": "^2.13.0",
     "uuid": "^10.0.0"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.11",
-    "@types/nodemailer": "^6.4.15",
     "@types/node": "^20.14.0",
+    "@types/nodemailer": "^6.4.15",
     "@types/sanitize-html": "^2.13.0",
     "@types/uuid": "^10.0.0",
     "concurrently": "^8.2.2",
@@ -61,7 +62,9 @@
       {
         "from": "app/out",
         "to": "app/out",
-        "filter": ["**/*"]
+        "filter": [
+          "**/*"
+        ]
       }
     ]
   }

@@ -42,13 +42,13 @@ export function registerAiHandlers(): void {
   });
 
   ipcMain.handle('ai:setApiKey', (_e, apiKey: string) => {
-    setSetting('gemini_api_key', apiKey);
+    setSetting('openai_api_key', apiKey);
     setSetting('ai_enabled', 'true');
     initGemini(apiKey);
   });
 
   ipcMain.handle('ai:getApiKey', () => {
-    return getSetting('gemini_api_key') ?? '';
+    return getSetting('openai_api_key') ?? '';
   });
 
   ipcMain.handle('ai:isEnabled', () => {

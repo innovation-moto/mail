@@ -1,9 +1,12 @@
 /** @type {import('next').NextConfig} */
+const isProd = process.env.NODE_ENV === 'production';
+
 const nextConfig = {
-  output: 'export',
-  trailingSlash: true,
+  ...(isProd ? { output: 'export' } : {}),
   images: { unoptimized: true },
-  assetPrefix: process.env.NODE_ENV === 'production' ? './' : '',
+  assetPrefix: isProd ? './' : '',
+  // Pages Router を使用
+  reactStrictMode: false,
 };
 
 export default nextConfig;

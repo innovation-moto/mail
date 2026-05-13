@@ -3,7 +3,7 @@ import { safeStorage } from 'electron';
 import { listAccounts } from '../db/queries/accounts';
 import { getEncryptedPassword } from '../db/queries/accounts';
 import { getUnreadCount } from '../db/queries/emails';
-import { syncFolder } from './imap';
+import { syncFolder, syncFlags } from './imap';
 import { getAllSettings } from '../db/queries/settings';
 import { showNewMailNotification } from './notification';
 
@@ -32,16 +32,21 @@ export async function syncAllAccounts(win?: BrowserWindow): Promise<void> {
       try {
         const beforeCount = getUnreadCount(account.id, 'INBOX');
         const result = await syncFolder(account, password, 'INBOX', 50);
-        const afterCount = getUnreadCount(account.id, 'INBOX');
 
+        // フラグ同期（既読・スター状態をGmailと合わせる）
+        const flagsUpdated = await syncFlags(account, password, 'INBOX').catch(() => 0);
+
+        const afterCount = getUnreadCount(account.id, 'INBOX');
         const newCount = afterCount - beforeCount;
         if (newCount > 0 && settings.notificationsEnabled) {
           showNewMailNotification(account.email, newCount);
         }
 
+        // Always notify renderer to refresh
         win?.webContents.send('mail:synced', { accountId: account.id, added: result.added });
+        console.log(`[sync] ${account.email}: added=${result.added} blocked=${result.blocked} flags=${flagsUpdated}`);
       } catch (err) {
-        console.error(`Sync failed for ${account.email}:`, err);
+        console.error(`[sync] Failed for ${account.email}:`, (err as Error).message);
       }
     }
   } finally {

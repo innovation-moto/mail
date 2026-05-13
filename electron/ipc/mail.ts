@@ -1,4 +1,5 @@
-import { ipcMain, safeStorage } from 'electron';
+import { ipcMain, safeStorage, dialog, shell } from 'electron';
+import fs from 'fs';
 import { ComposeData } from '../../shared/types';
 import { getAccount, getEncryptedPassword } from '../db/queries/accounts';
 import {
@@ -9,8 +10,11 @@ import {
   markDeleted,
   moveEmail,
   searchEmails,
+  getAllFolderUnreadCounts,
+  getAttachmentContent,
+  saveAttachments,
 } from '../db/queries/emails';
-import { syncFolder, fetchFolders, imapMarkRead, imapDeleteEmail, imapMoveEmail } from '../services/imap';
+import { syncFolder, fetchFolders, imapMarkRead, imapDeleteEmail, imapMoveEmail, fetchAttachmentsForEmail } from '../services/imap';
 import { sendEmail } from '../services/smtp';
 
 function getPassword(accountId: string): string {
@@ -91,5 +95,69 @@ export function registerMailHandlers(): void {
 
   ipcMain.handle('mail:search', (_e, accountId: string, query: string) => {
     return searchEmails(accountId, query);
+  });
+
+  ipcMain.handle('mail:getUnreadCounts', (_e, accountId: string) => {
+    return getAllFolderUnreadCounts(accountId);
+  });
+
+  ipcMain.handle('mail:markSpam', async (_e, emailId: string) => {
+    const email = getEmail(emailId);
+    if (!email) throw new Error('メールが見つかりません');
+    const account = getAccount(email.accountId);
+    if (!account) throw new Error('アカウントが見つかりません');
+    const password = getPassword(email.accountId);
+
+    // スパムフォルダを探す（Gmail: [Gmail]/迷惑メール or [Gmail]/Spam）
+    const { fetchFolders: fetchFols } = await import('../services/imap');
+    const folders = await fetchFols(account, password);
+    const spamFolder = folders.find((f) =>
+      f.specialUse === '\\Junk' ||
+      f.path.toLowerCase().includes('spam') ||
+      f.path.includes('迷惑') ||
+      f.path.toLowerCase().includes('junk'),
+    );
+
+    const targetFolder = spamFolder?.path ?? '[Gmail]/Spam';
+
+    // IMAPでスパムフォルダに移動
+    try {
+      await imapMoveEmail(account, password, email.folder, email.uid, targetFolder);
+    } catch {}
+
+    // DBでも移動・既読にする
+    moveEmail(emailId, targetFolder);
+    markRead(emailId, true);
+
+    return targetFolder;
+  });
+
+  ipcMain.handle('mail:fetchAttachments', async (_e, emailId: string) => {
+    const email = getEmail(emailId);
+    if (!email) throw new Error('メールが見つかりません');
+    const account = getAccount(email.accountId);
+    if (!account) throw new Error('アカウントが見つかりません');
+    const password = getPassword(email.accountId);
+    const attachments = await fetchAttachmentsForEmail(account, password, email.folder, email.uid);
+    if (attachments.length > 0) {
+      saveAttachments(emailId, attachments);
+    }
+    // 保存後の最新データを返す
+    return getEmail(emailId);
+  });
+
+  ipcMain.handle('mail:downloadAttachment', async (_e, attachmentId: string) => {
+    const att = getAttachmentContent(attachmentId);
+    if (!att) throw new Error('添付ファイルが見つかりません');
+
+    const { filePath } = await dialog.showSaveDialog({
+      defaultPath: att.filename,
+      filters: [{ name: 'All Files', extensions: ['*'] }],
+    });
+    if (!filePath) return null; // キャンセル
+
+    fs.writeFileSync(filePath, att.content);
+    shell.showItemInFolder(filePath);
+    return filePath;
   });
 }

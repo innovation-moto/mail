@@ -12,7 +12,8 @@ import type {
   AiSummarizeResult,
   SmartSearchResult,
   SyncResult,
-} from '@shared/types';
+  FilterRule,
+} from '@/types/shared';
 
 interface ElectronAPI {
   accounts: {
@@ -33,6 +34,10 @@ interface ElectronAPI {
     delete: (emailId: string) => Promise<void>;
     move: (emailId: string, folder: string) => Promise<void>;
     search: (accountId: string, query: string) => Promise<Email[]>;
+    getUnreadCounts: (accountId: string) => Promise<Record<string, number>>;
+    fetchAttachments: (emailId: string) => Promise<Email | null>;
+    markSpam: (emailId: string) => Promise<string>;
+    downloadAttachment: (attachmentId: string) => Promise<string | null>;
   };
   ai: {
     generateReply: (emailId: string, tone: AiTone) => Promise<string>;
@@ -52,6 +57,16 @@ interface ElectronAPI {
     get: () => Promise<Settings>;
     set: (key: string, value: string) => Promise<Settings>;
     setAll: (settings: Partial<Settings>) => Promise<Settings>;
+  };
+  filters: {
+    list: (accountId: string) => Promise<FilterRule[]>;
+    create: (accountId: string, data: Omit<FilterRule, 'id' | 'accountId' | 'createdAt'>) => Promise<FilterRule>;
+    update: (id: string, data: Partial<Omit<FilterRule, 'id' | 'accountId' | 'createdAt'>>) => Promise<FilterRule>;
+    delete: (id: string) => Promise<void>;
+  };
+  folders: {
+    create: (accountId: string, path: string) => Promise<void>;
+    delete: (accountId: string, path: string) => Promise<void>;
   };
   on: (channel: string, callback: (...args: unknown[]) => void) => () => void;
 }
