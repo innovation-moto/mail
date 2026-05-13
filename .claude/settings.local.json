@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(gh repo *)",
+      "Bash(npm install *)",
+      "Bash(tsc -p tsconfig.electron.json --noEmit)",
+      "Bash(./node_modules/.bin/tsc -p tsconfig.electron.json --noEmit)",
+      "Bash(nodebrew list *)",
+      "Read(//Users/innovation_sado/.nodebrew/node/**)",
+      "Bash(nvm ls *)",
+      "Read(//Users/innovation_sado/.nvm/versions/**)",
+      "Bash(nodebrew use *)",
+      "Bash(./node_modules/.bin/next build *)",
+      "Bash(./node_modules/.bin/tsc -p tsconfig.electron.json)",
+      "Bash(git init *)",
+      "Bash(git remote *)",
+      "Bash(git add *)"
+    ]
+  }
+}
