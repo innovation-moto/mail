@@ -233,10 +233,10 @@ function MailViewContent({
         {onBack && (
           <button
             onClick={onBack}
-            className="md:hidden flex items-center gap-1 text-blue-500 text-sm mb-3 -ml-1"
+            className="md:hidden inline-flex items-center gap-1 mb-3 px-3 py-1.5 rounded-full bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 text-sm font-medium active:scale-95 transition-transform"
           >
-            <ChevronLeft size={18} />
-            <span>戻る</span>
+            <ChevronLeft size={15} strokeWidth={2.5} />
+            <span>メール一覧</span>
           </button>
         )}
         {/* Subject */}
