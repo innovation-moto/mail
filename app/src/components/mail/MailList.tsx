@@ -1,8 +1,9 @@
 'use client';
 import { useState } from 'react';
-import { Search, Sparkles, X, RefreshCw, Paperclip, ShieldBan, Trash2, CheckCheck, Pin, PinOff } from 'lucide-react';
+import { Search, Sparkles, X, RefreshCw, Paperclip, ShieldBan, Trash2, CheckCheck, Pin, PinOff, Menu, PenSquare } from 'lucide-react';
 import { useAccountStore } from '@/store/accountStore';
 import { useMailStore } from '@/store/mailStore';
+import { useUIStore } from '@/store/uiStore';
 import { Email } from '@/types/shared';
 import { cn, formatEmailDate, truncate, getInitials, getAvatarColor, PRIORITY_COLORS } from '@/lib/utils';
 import { api } from '@/lib/ipc';
@@ -14,6 +15,7 @@ export function MailList() {
     selectEmail, markRead, markAllRead, searchResults, searchQuery, isSmartSearch,
     smartSearchAnswer, clearSearch, search, smartSearch, syncEmails,
   } = useMailStore();
+  const { openCompose, setMobileSidebarOpen, setMobilePanel } = useUIStore();
   const [query, setQuery] = useState('');
   const [aiEnabled, setAiEnabled] = useState(false);
   const [searchMode, setSearchMode] = useState<'normal' | 'smart'>('normal');
@@ -32,6 +34,7 @@ export function MailList() {
 
   async function handleSelectEmail(email: Email) {
     selectEmail(email.id);
+    setMobilePanel('mail'); // モバイル：メール本文パネルへ切り替え
     if (!email.isRead) {
       await markRead(email.id, true);
     }
@@ -48,11 +51,18 @@ export function MailList() {
     : selectedFolder;
 
   return (
-    <div className="flex flex-col w-80 flex-shrink-0 h-screen border-r border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900">
+    <div className="flex flex-col w-full md:w-80 flex-shrink-0 h-screen border-r border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900">
       {/* Header */}
-      <div className="px-4 pt-8 pb-3 flex-shrink-0">
-        <div className="flex items-center justify-between mb-3">
-          <h2 className="text-lg font-semibold text-gray-900 dark:text-white">{title}</h2>
+      <div className="px-3 md:px-4 pt-4 md:pt-8 pb-3 flex-shrink-0">
+        <div className="flex items-center justify-between mb-3 gap-2">
+          {/* モバイル：ハンバーガーメニュー */}
+          <button
+            onClick={() => setMobileSidebarOpen(true)}
+            className="md:hidden p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-500 flex-shrink-0"
+          >
+            <Menu size={20} />
+          </button>
+          <h2 className="text-lg font-semibold text-gray-900 dark:text-white flex-1 truncate">{title}</h2>
           <div className="flex items-center gap-0.5">
             {searchResults === null && emails.some((e) => !e.isRead) && (
               <button
@@ -70,6 +80,14 @@ export function MailList() {
               title="メールを更新"
             >
               <RefreshCw size={15} className={cn(syncing && 'animate-spin')} />
+            </button>
+            {/* モバイル：新規作成ボタン */}
+            <button
+              onClick={() => openCompose()}
+              className="md:hidden p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-400 hover:text-blue-500 dark:hover:text-blue-400 transition-colors"
+              title="新規メール"
+            >
+              <PenSquare size={15} />
             </button>
           </div>
         </div>

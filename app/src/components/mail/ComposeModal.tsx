@@ -113,7 +113,7 @@ export function ComposeModal() {
   }
 
   return (
-    <div className="fixed bottom-4 right-4 z-50 w-[560px] shadow-2xl rounded-xl overflow-hidden border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
+    <div className="fixed bottom-0 right-0 z-50 w-full md:bottom-4 md:right-4 md:w-[560px] shadow-2xl rounded-t-2xl md:rounded-xl overflow-hidden border-t md:border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
       {/* Title bar */}
       <div className="flex items-center justify-between px-4 py-2.5 bg-gray-100 dark:bg-gray-700 cursor-move">
         <span className="text-sm font-medium text-gray-700 dark:text-gray-200">

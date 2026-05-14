@@ -3,7 +3,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import {
   Reply, Forward, Trash2, Star, StarOff, Pin, PinOff, MoreHorizontal,
   Sparkles, ChevronDown, Paperclip, X, Copy, Check,
-  FolderInput, ShieldBan, Filter, Plus, Loader2, Download, AlertTriangle, CalendarPlus,
+  FolderInput, ShieldBan, Filter, Plus, Loader2, Download, AlertTriangle, CalendarPlus, ChevronLeft,
 } from 'lucide-react';
 import { useAccountStore } from '@/store/accountStore';
 import { useMailStore } from '@/store/mailStore';
@@ -15,7 +15,7 @@ import { cn, formatFullDate, CATEGORY_LABELS, PRIORITY_LABELS, PRIORITY_COLORS }
 export function MailView() {
   const { selectedAccountId } = useAccountStore();
   const { selectedEmail, starEmail, pinEmail, deleteEmail, updateEmailLocally } = useMailStore();
-  const { openCompose } = useUIStore();
+  const { openCompose, setMobilePanel } = useUIStore();
   const email = selectedEmail();
 
   if (!email) {
@@ -73,13 +73,14 @@ export function MailView() {
         onReplyAll={() => openCompose({ replyTo: email, replyAll: true })}
         onForward={() => openCompose({ forwardFrom: email })}
         onUpdateAi={(patch) => updateEmailLocally(email.id, patch as Partial<Email>)}
+        onBack={() => setMobilePanel('list')}
       />
     </div>
   );
 }
 
 function MailViewContent({
-  email, accountId, onStar, onPin, onDelete, onReply, onReplyAll, onForward, onUpdateAi,
+  email, accountId, onStar, onPin, onDelete, onReply, onReplyAll, onForward, onUpdateAi, onBack,
 }: {
   email: Email;
   accountId: string;
@@ -90,6 +91,7 @@ function MailViewContent({
   onReplyAll: () => void;
   onForward: () => void;
   onUpdateAi: (patch: Partial<Email>) => void;
+  onBack?: () => void;
 }) {
   const { updateEmailLocally } = useMailStore();
   const [summarizing, setSummarizing] = useState(false);
@@ -207,9 +209,19 @@ function MailViewContent({
   return (
     <>
       {/* Header */}
-      <div className="px-6 pt-8 pb-4 border-b border-gray-200 dark:border-gray-700 flex-shrink-0">
+      <div className="px-4 md:px-6 pt-3 md:pt-8 pb-4 border-b border-gray-200 dark:border-gray-700 flex-shrink-0">
+        {/* モバイル：戻るボタン */}
+        {onBack && (
+          <button
+            onClick={onBack}
+            className="md:hidden flex items-center gap-1 text-blue-500 text-sm mb-3 -ml-1"
+          >
+            <ChevronLeft size={18} />
+            <span>戻る</span>
+          </button>
+        )}
         {/* Subject */}
-        <h1 className="text-xl font-semibold text-gray-900 dark:text-white mb-3 leading-tight">
+        <h1 className="text-lg md:text-xl font-semibold text-gray-900 dark:text-white mb-3 leading-tight">
           {email.subject}
         </h1>
 

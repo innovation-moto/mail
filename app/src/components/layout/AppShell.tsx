@@ -11,11 +11,12 @@ import { ComposeModal } from '../mail/ComposeModal';
 import { AccountSetupModal } from '../settings/AccountSetupModal';
 import { SettingsModal } from '../settings/SettingsModal';
 import { SetupWizard } from '../settings/SetupWizard';
+import { cn } from '@/lib/utils';
 
 export function AppShell() {
   const { accounts, loadAccounts, selectedAccountId } = useAccountStore();
   const { loadEmails, loadFolders, syncEmails, loadUnreadCounts, setUnreadCounts } = useMailStore();
-  const { theme, modal, applyTheme } = useUIStore();
+  const { theme, modal, applyTheme, mobilePanel, mobileSidebarOpen, setMobileSidebarOpen } = useUIStore();
   const [initialized, setInitialized] = useState(false);
 
   useEffect(() => {
@@ -99,10 +100,44 @@ export function AppShell() {
   }
 
   return (
-    <div className="flex h-screen overflow-hidden bg-white dark:bg-gray-900">
-      <Sidebar />
-      <MailList />
-      <MailView />
+    <div className="flex h-screen overflow-hidden bg-white dark:bg-gray-900 relative">
+      {/* モバイル：サイドバーのバックドロップ */}
+      {mobileSidebarOpen && (
+        <div
+          className="md:hidden fixed inset-0 bg-black/50 z-40"
+          onClick={() => setMobileSidebarOpen(false)}
+        />
+      )}
+
+      {/* デスクトップ：常に表示されるサイドバー */}
+      <div className="hidden md:flex flex-shrink-0">
+        <Sidebar />
+      </div>
+
+      {/* モバイル：ドロワーサイドバー */}
+      {mobileSidebarOpen && (
+        <div className="md:hidden fixed inset-y-0 left-0 z-50 flex shadow-2xl">
+          <Sidebar onMobileClose={() => setMobileSidebarOpen(false)} />
+        </div>
+      )}
+
+      {/* メールリストパネル（モバイルは1画面ずつ） */}
+      <div className={cn(
+        'flex-col',
+        mobilePanel === 'list' ? 'flex' : 'hidden',
+        'md:flex',
+      )}>
+        <MailList />
+      </div>
+
+      {/* メール本文パネル（モバイルは1画面ずつ） */}
+      <div className={cn(
+        'flex-1 flex-col min-w-0',
+        mobilePanel === 'mail' ? 'flex' : 'hidden',
+        'md:flex',
+      )}>
+        <MailView />
+      </div>
 
       {modal === 'compose' && <ComposeModal />}
       {modal === 'accountSetup' && <AccountSetupModal />}

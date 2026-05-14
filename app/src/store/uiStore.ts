@@ -17,6 +17,8 @@ interface UIState {
   composeState: ComposeState;
   sidebarCollapsed: boolean;
   isLoading: boolean;
+  mobilePanel: 'list' | 'mail';
+  mobileSidebarOpen: boolean;
 
   setTheme: (theme: Theme) => void;
   openCompose: (state?: ComposeState) => void;
@@ -26,6 +28,8 @@ interface UIState {
   toggleSidebar: () => void;
   setLoading: (loading: boolean) => void;
   applyTheme: (theme: Theme) => void;
+  setMobilePanel: (panel: 'list' | 'mail') => void;
+  setMobileSidebarOpen: (open: boolean) => void;
 }
 
 export const useUIStore = create<UIState>((set, get) => ({
@@ -34,6 +38,8 @@ export const useUIStore = create<UIState>((set, get) => ({
   composeState: {},
   sidebarCollapsed: false,
   isLoading: false,
+  mobilePanel: 'list',
+  mobileSidebarOpen: false,
 
   setTheme: (theme) => {
     set({ theme });
@@ -59,4 +65,6 @@ export const useUIStore = create<UIState>((set, get) => ({
   closeModal: () => set({ modal: null, composeState: {} }),
   toggleSidebar: () => set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
   setLoading: (isLoading) => set({ isLoading }),
+  setMobilePanel: (panel) => set({ mobilePanel: panel }),
+  setMobileSidebarOpen: (open) => set({ mobileSidebarOpen: open }),
 }));

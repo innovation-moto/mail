@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   Inbox, Send, FileText, Trash2, Star, Pin, Folder, ChevronDown,
-  Plus, Settings, RefreshCw, PanelLeftClose, PanelLeft, GripVertical,
+  Plus, Settings, RefreshCw, PanelLeftClose, PanelLeft, GripVertical, X,
 } from 'lucide-react';
 import { useAccountStore } from '@/store/accountStore';
 import { useMailStore } from '@/store/mailStore';
@@ -33,7 +33,7 @@ function saveFolderOrder(order: string[]) {
   localStorage.setItem(FOLDER_ORDER_KEY, JSON.stringify(order));
 }
 
-export function Sidebar() {
+export function Sidebar({ onMobileClose }: { onMobileClose?: () => void }) {
   const { accounts, selectedAccountId, selectAccount } = useAccountStore();
   const { selectedFolder, folders, selectFolder, syncEmails, syncing, loadEmails, folderUnreadCounts, moveEmail } = useMailStore();
   const { openCompose, openSettings, sidebarCollapsed, toggleSidebar } = useUIStore();
@@ -166,6 +166,8 @@ export function Sidebar() {
     selectFolder(path);
     await loadEmails(selectedAccountId, path);
     syncEmails(selectedAccountId).catch(() => {});
+    // モバイル：フォルダ選択後にドロワーを閉じる
+    onMobileClose?.();
   }
 
   async function handleSync() {
@@ -180,14 +182,23 @@ export function Sidebar() {
         sidebarCollapsed ? 'w-14' : 'w-60',
       )}
     >
-      {/* macOS titlebar drag area */}
+      {/* macOS titlebar drag area / モバイルヘッダー */}
       <div className={cn(
-        'drag flex items-center justify-end px-2 flex-shrink-0',
-        sidebarCollapsed ? 'h-16 items-end pb-1' : 'h-8',
+        'drag flex items-center px-2 flex-shrink-0',
+        sidebarCollapsed ? 'h-16 items-end pb-1 justify-end' : 'h-8 justify-between',
       )}>
+        {/* モバイル閉じるボタン */}
+        {onMobileClose && !sidebarCollapsed && (
+          <button
+            onClick={onMobileClose}
+            className="no-drag md:hidden p-1 rounded hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-500"
+          >
+            <X size={16} />
+          </button>
+        )}
         <button
           onClick={toggleSidebar}
-          className="no-drag p-1 rounded hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-500"
+          className="no-drag p-1 rounded hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-500 hidden md:block"
         >
           {sidebarCollapsed ? <PanelLeft size={14} /> : <PanelLeftClose size={14} />}
         </button>
