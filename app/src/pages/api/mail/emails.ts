@@ -59,8 +59,8 @@ function toEmail(row: any) {
     to: row.to_addresses || [],
     cc: row.cc_addresses || [],
     subject: row.subject,
-    bodyText: row.body_text ?? '',
-    bodyHtml: row.body_html ?? '',
+    bodyText: '',   // 本文はオンデマンドで取得
+    bodyHtml: '',
     date: row.date,
     isRead: row.is_read,
     isStarred: row.is_starred,

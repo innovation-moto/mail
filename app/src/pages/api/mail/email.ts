@@ -22,41 +22,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     .single();
   if (error || !email) return res.status(404).json({ error: 'メールが見つかりません' });
 
-  // DBに本文がすでにある場合はそのまま返す
-  if (email.body_text || email.body_html) {
-    return res.json({
-      id: email.id,
-      accountId: email.account_id,
-      uid: email.uid,
-      folder: email.folder,
-      from: { address: email.from_address, name: email.from_name },
-      to: email.to_addresses || [],
-      cc: email.cc_addresses || [],
-      subject: email.subject,
-      bodyText: email.body_text ?? '',
-      bodyHtml: email.body_html ?? '',
-      date: email.date,
-      isRead: email.is_read,
-      isStarred: email.is_starred,
-      isPinned: email.is_pinned,
-      hasAttachments: email.has_attachments,
-    });
-  }
-
-  // IMAPから本文をオンデマンドで取得してDBに保存
+  // IMAPから本文をオンデマンドで取得
   try {
     const { bodyText, bodyHtml } = await fetchEmailBody(
       email.accounts,
       email.folder,
       email.uid,
     );
-
-    // DBに保存（次回以降はIMAPアクセス不要）
-    await supabase
-      .from('emails')
-      .update({ body_text: bodyText, body_html: bodyHtml })
-      .eq('id', emailId);
-
     return res.json({
       id: email.id,
       accountId: email.account_id,

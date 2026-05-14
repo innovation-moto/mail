@@ -83,7 +83,16 @@ export const useMailStore = create<MailState>((set, get) => ({
     const f = folder ?? get().selectedFolder;
     set({ loading: true, error: null });
     try {
-      const emails = await api.mail.fetchEmails(accountId, f, 50, 0);
+      const freshEmails = await api.mail.fetchEmails(accountId, f, 50, 0);
+      // 既にメモリにある本文を保持（ポーリング時に本文がリセットされないよう）
+      const existing = get().emails;
+      const emails = freshEmails.map((e: { id: string; bodyText: string; bodyHtml: string }) => {
+        const prev = existing.find((p) => p.id === e.id);
+        if (prev && (prev.bodyText || prev.bodyHtml) && !e.bodyText && !e.bodyHtml) {
+          return { ...e, bodyText: prev.bodyText, bodyHtml: prev.bodyHtml };
+        }
+        return e;
+      });
       const unreadCount = f === 'INBOX' ? emails.filter((e: { isRead: boolean }) => !e.isRead).length : get().inboxUnreadCount;
       set({ emails, loading: false, selectedFolder: f, inboxUnreadCount: unreadCount });
     } catch (err) {
