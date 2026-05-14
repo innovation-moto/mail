@@ -292,7 +292,7 @@ function MailViewContent({
         )}
 
         {/* Action bar - horizontally scrollable on mobile */}
-        <div className="flex items-center gap-1 mt-3 overflow-x-auto scrollbar-none -mx-1 px-1">
+        <div className="flex flex-nowrap items-center gap-1 mt-3 overflow-x-auto scrollbar-none -mx-1 px-1">
           <ActionButton
             icon={email.isStarred ? <StarOff size={15} /> : <Star size={15} />}
             label={email.isStarred ? 'スター解除' : 'スター'}
@@ -312,7 +312,7 @@ function MailViewContent({
           <button
             onClick={handleSummarize}
             disabled={summarizing}
-            className="flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 hover:bg-purple-200 dark:hover:bg-purple-900/50 disabled:opacity-50 transition-colors"
+            className="flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 hover:bg-purple-200 dark:hover:bg-purple-900/50 disabled:opacity-50 transition-colors whitespace-nowrap"
           >
             <Sparkles size={13} />
             {summarizing ? '要約中…' : '要約'}
@@ -321,7 +321,7 @@ function MailViewContent({
           <button
             onClick={handleClassify}
             disabled={classifying}
-            className="flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 hover:bg-blue-200 dark:hover:bg-blue-900/50 disabled:opacity-50 transition-colors"
+            className="flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 hover:bg-blue-200 dark:hover:bg-blue-900/50 disabled:opacity-50 transition-colors whitespace-nowrap"
           >
             <Sparkles size={13} />
             {classifying ? '分類中…' : 'AI分類'}
@@ -330,7 +330,7 @@ function MailViewContent({
           <button
             onClick={handleDetectCalendar}
             disabled={detectingCalendar}
-            className="flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 hover:bg-green-200 dark:hover:bg-green-900/50 disabled:opacity-50 transition-colors"
+            className="flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 hover:bg-green-200 dark:hover:bg-green-900/50 disabled:opacity-50 transition-colors whitespace-nowrap"
           >
             <CalendarPlus size={13} />
             {detectingCalendar ? '検出中…' : 'カレンダー'}
@@ -693,7 +693,7 @@ function ActionButton({
     <button
       onClick={onClick}
       className={cn(
-        'flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg transition-colors',
+        'flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg transition-colors whitespace-nowrap',
         variant === 'danger'
           ? 'text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20'
           : active
