@@ -109,6 +109,7 @@ function MailViewContent({
   const isMobile = useMobile();
   const { updateEmailLocally } = useMailStore();
   const [bodyLoading, setBodyLoading] = useState(false);
+  const [bodyError, setBodyError] = useState(false);
   const [summarizing, setSummarizing] = useState(false);
   const [classifying, setClassifying] = useState(false);
   const [summaryResult, setSummaryResult] = useState<AiSummarizeResult | null>(
@@ -133,21 +134,26 @@ function MailViewContent({
     setCalendarAdded(false);
   }, [email.id]);
 
-  // メール選択時に本文をIMAPからオンデマンド取得（Web版）
+  // メール選択時に本文をIMAPからオンデマンド取得
+  const fetchBody = () => {
+    setBodyLoading(true);
+    setBodyError(false);
+    api.mail.fetchEmail(email.id)
+      .then((fullEmail) => {
+        if (fullEmail?.bodyText || fullEmail?.bodyHtml) {
+          updateEmailLocally(email.id, {
+            bodyText: fullEmail.bodyText,
+            bodyHtml: fullEmail.bodyHtml,
+          });
+        }
+      })
+      .catch((e) => { console.error(e); setBodyError(true); })
+      .finally(() => setBodyLoading(false));
+  };
+
   useEffect(() => {
-    if (!email.bodyText && !email.bodyHtml && !bodyLoading) {
-      setBodyLoading(true);
-      api.mail.fetchEmail(email.id)
-        .then((fullEmail) => {
-          if (fullEmail?.bodyText || fullEmail?.bodyHtml) {
-            updateEmailLocally(email.id, {
-              bodyText: fullEmail.bodyText,
-              bodyHtml: fullEmail.bodyHtml,
-            });
-          }
-        })
-        .catch(console.error)
-        .finally(() => setBodyLoading(false));
+    if (!email.bodyText && !email.bodyHtml) {
+      fetchBody();
     }
   }, [email.id]);
 
@@ -324,8 +330,19 @@ function MailViewContent({
             {/* Body */}
             <div className="px-4 pb-4 min-h-16">
               {bodyLoading ? (
-                <div className="flex items-center justify-center h-16">
+                <div className="flex items-center justify-center h-20 gap-2 text-gray-400">
                   <Loader2 size={20} className="animate-spin text-blue-400" />
+                  <span className="text-sm">読み込み中…</span>
+                </div>
+              ) : bodyError ? (
+                <div className="flex flex-col items-center justify-center h-20 gap-2 text-gray-400">
+                  <span className="text-sm">本文の読み込みに失敗しました</span>
+                  <button
+                    onClick={fetchBody}
+                    className="text-xs text-blue-500 underline"
+                  >
+                    再試行
+                  </button>
                 </div>
               ) : email.bodyHtml ? (
                 <EmailHtmlView html={email.bodyHtml} />
@@ -333,7 +350,12 @@ function MailViewContent({
                 <pre className="text-sm text-gray-700 dark:text-gray-300 whitespace-pre-wrap font-sans leading-relaxed">
                   {email.bodyText}
                 </pre>
-              ) : null}
+              ) : (
+                <div className="flex flex-col items-center justify-center h-20 gap-2 text-gray-400">
+                  <span className="text-sm">本文がありません</span>
+                  <button onClick={fetchBody} className="text-xs text-blue-500 underline">再読み込み</button>
+                </div>
+              )}
             </div>
 
             {/* Attachments */}
@@ -665,6 +687,11 @@ function MailViewContent({
             <Loader2 size={16} className="animate-spin" />
             <span className="text-sm">本文を読み込み中…</span>
           </div>
+        ) : bodyError ? (
+          <div className="flex flex-col items-center justify-center h-24 gap-2 text-gray-400">
+            <span className="text-sm">本文の読み込みに失敗しました</span>
+            <button onClick={fetchBody} className="text-xs text-blue-500 underline">再試行</button>
+          </div>
         ) : email.bodyHtml ? (
           <EmailHtmlView html={email.bodyHtml} />
         ) : email.bodyText ? (
@@ -672,7 +699,10 @@ function MailViewContent({
             {email.bodyText}
           </pre>
         ) : (
-          <p className="text-sm text-gray-400 text-center py-8">本文がありません</p>
+          <div className="flex flex-col items-center justify-center h-24 gap-2 text-gray-400">
+            <span className="text-sm">本文がありません</span>
+            <button onClick={fetchBody} className="text-xs text-blue-500 underline">再読み込み</button>
+          </div>
         )}
       </div>
 
