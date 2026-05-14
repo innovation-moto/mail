@@ -149,7 +149,7 @@ export async function syncAllAccounts(win?: BrowserWindow): Promise<void> {
 
 export function startSync(win: BrowserWindow): void {
   const settings = getAllSettings();
-  const intervalMs = (settings.syncIntervalSec ?? 15) * 1000;
+  const intervalMs = (settings.syncIntervalSec ?? 30) * 1000;
 
   syncTimer = setInterval(() => {
     syncAllAccounts(win).catch(console.error);

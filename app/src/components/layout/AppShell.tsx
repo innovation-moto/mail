@@ -72,7 +72,7 @@ export function AppShell() {
       const counts = useMailStore.getState().folderUnreadCounts;
       console.log('[poll] folderUnreadCounts:', counts);
       loadEmails(selectedAccountId, undefined);
-    }, 15 * 1000);
+    }, 30 * 1000);
     return () => clearInterval(timer);
   }, [selectedAccountId]);
 
