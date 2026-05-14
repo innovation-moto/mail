@@ -38,9 +38,6 @@ export function Sidebar() {
   const { selectedFolder, folders, selectFolder, syncEmails, syncing, loadEmails, folderUnreadCounts, moveEmail } = useMailStore();
   const { openCompose, openSettings, sidebarCollapsed, toggleSidebar } = useUIStore();
 
-  // アカウント全体の未読数合計（スクロールせずに確認できるように）
-  const totalUnread = Object.values(folderUnreadCounts).reduce((sum, n) => sum + n, 0);
-
   const account = accounts.find((a) => a.id === selectedAccountId);
 
   // SPECIALフォルダと重複するGmailフォルダを除外するパターン
@@ -98,6 +95,9 @@ export function Sidebar() {
       .filter(Boolean),
     ...allFolders.filter((f) => !orderedPaths.includes(f.path)),
   ] as typeof allFolders;
+
+  // サイドバーに表示されているフォルダのみ合計（非表示フォルダの二重計算を防ぐ）
+  const totalUnread = sortedFolders.reduce((sum, f) => sum + (folderUnreadCounts[f.path] ?? 0), 0);
 
   // ドラッグ状態（フォルダ並び替え用）
   const dragIndex = useRef<number | null>(null);
