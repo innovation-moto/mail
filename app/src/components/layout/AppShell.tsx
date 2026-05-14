@@ -21,6 +21,16 @@ export function AppShell() {
   useEffect(() => {
     const init = async () => {
       try {
+        // Web版：未ログインならログインページへ
+        if (!isElectron) {
+          const { supabase } = await import('@/lib/supabase');
+          const { data: { session } } = await supabase.auth.getSession();
+          if (!session) {
+            window.location.href = '/login';
+            return;
+          }
+        }
+
         // Apply saved theme
         const settings = await api.settings.get();
         applyTheme(settings.theme as 'light' | 'dark' | 'system');
