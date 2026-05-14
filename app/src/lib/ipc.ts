@@ -110,19 +110,19 @@ export const api = {
   ai: {
     generateReply: (emailId: string, tone: AiTone) => isElectron
       ? getAPI().ai.generateReply(emailId, tone)
-      : Promise.reject(new Error('Web版ではAI機能は未対応')),
+      : webFetch('/api/ai/generate-reply', { method: 'POST', body: JSON.stringify({ emailId, tone }) }).then((r) => r.reply as string),
     summarize: (emailId: string) => isElectron
       ? getAPI().ai.summarize(emailId)
-      : Promise.reject(new Error('Web版ではAI機能は未対応')),
+      : webFetch('/api/ai/summarize', { method: 'POST', body: JSON.stringify({ emailId }) }),
     classify: (emailId: string) => isElectron
       ? getAPI().ai.classify(emailId)
-      : Promise.reject(new Error('Web版ではAI機能は未対応')),
+      : webFetch('/api/ai/classify', { method: 'POST', body: JSON.stringify({ emailId }) }),
     smartSearch: (accountId: string, query: string) => isElectron
       ? getAPI().ai.smartSearch(accountId, query)
-      : Promise.reject(new Error('Web版ではAI機能は未対応')),
+      : Promise.reject(new Error('スマート検索はWeb版では未対応です')),
     detectCalendarEvent: (emailId: string) => isElectron
       ? getAPI().ai.detectCalendarEvent(emailId)
-      : Promise.reject(new Error('Web版ではAI機能は未対応')),
+      : webFetch('/api/ai/detect-calendar', { method: 'POST', body: JSON.stringify({ emailId }) }).then((r) => r.event ?? null),
     openCalendarEvent: (event: CalendarEvent) => isElectron
       ? getAPI().ai.openCalendarEvent(event)
       : Promise.resolve(null),
@@ -134,7 +134,7 @@ export const api = {
       : Promise.resolve(''),
     isEnabled: () => isElectron
       ? getAPI().ai.isEnabled()
-      : Promise.resolve(false),
+      : Promise.resolve(true),
   },
   blocklist: {
     list: (accountId: string) => isElectron
