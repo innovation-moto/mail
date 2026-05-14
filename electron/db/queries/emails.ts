@@ -244,6 +244,33 @@ export function getAllFolderUnreadCounts(accountId: string): Record<string, numb
   return Object.fromEntries(rows.map((r) => [r.folder, r.count]));
 }
 
+export function getTotalUnreadCount(): number {
+  const db = getDb();
+  const row = db.prepare(`
+    SELECT COUNT(*) as count FROM emails
+    WHERE is_read = 0 AND is_deleted = 0
+      AND folder NOT LIKE '%Trash%'
+      AND folder NOT LIKE '%ゴミ箱%'
+      AND folder NOT LIKE '%Deleted%'
+      AND folder NOT LIKE '%迷惑%'
+      AND folder NOT LIKE '%Spam%'
+      AND folder NOT LIKE '%Junk%'
+      AND folder NOT LIKE '%Sent%'
+      AND folder NOT LIKE '%送信%'
+      AND folder NOT LIKE '%Draft%'
+      AND folder NOT LIKE '%下書き%'
+  `).get() as { count: number };
+  return row.count;
+}
+
+export function getDistinctFolders(accountId: string): string[] {
+  const db = getDb();
+  const rows = db.prepare(`
+    SELECT DISTINCT folder FROM emails WHERE account_id = ? AND is_deleted = 0
+  `).all(accountId) as { folder: string }[];
+  return rows.map((r) => r.folder);
+}
+
 export function getMaxUid(accountId: string, folder: string): number {
   const db = getDb();
   const row = db.prepare(`

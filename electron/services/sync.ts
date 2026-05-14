@@ -1,14 +1,57 @@
-import { BrowserWindow } from 'electron';
+import { app, BrowserWindow } from 'electron';
 import { safeStorage } from 'electron';
 import { listAccounts } from '../db/queries/accounts';
 import { getEncryptedPassword } from '../db/queries/accounts';
-import { getUnreadCount, listEmails } from '../db/queries/emails';
-import { syncFolder, syncFlags } from './imap';
+import { getUnreadCount, listEmails, getTotalUnreadCount, getDistinctFolders, getAllFolderUnreadCounts } from '../db/queries/emails';
+import { syncFolder, syncFlags, fetchFolders } from './imap';
 import { getAllSettings } from '../db/queries/settings';
 import { showNewMailNotification } from './notification';
 
+function updateBadge(): void {
+  try {
+    const count = getTotalUnreadCount();
+    app.setBadgeCount(count);
+  } catch { /* badgeCount非対応環境では無視 */ }
+}
+
 let syncTimer: NodeJS.Timeout | null = null;
 let isSyncing = false;
+
+// フォルダリストのメモリキャッシュ（アカウントID → フォルダパス[]）
+const folderCache: Record<string, { folders: string[]; fetchedAt: number }> = {};
+const FOLDER_CACHE_TTL = 10 * 60 * 1000; // 10分
+
+const SKIP_FOLDERS = /Trash|ゴミ箱|Deleted|Spam|Junk|迷惑|Draft|下書き|Sent|送信済み|Sent Items|Outbox/i;
+
+async function getFoldersToSync(account: any, password: string): Promise<string[]> {
+  const now = Date.now();
+  const cached = folderCache[account.id];
+
+  // キャッシュが有効な場合はそのまま返す
+  if (cached && now - cached.fetchedAt < FOLDER_CACHE_TTL) {
+    return cached.folders;
+  }
+
+  // DBにある既存フォルダ（フォルダを開いたことがある）
+  const knownFolders = getDistinctFolders(account.id).filter((f) => !SKIP_FOLDERS.test(f));
+  const result = Array.from(new Set(['INBOX', ...knownFolders]));
+
+  // サーバーからフォルダ一覧を取得してキャッシュ
+  try {
+    const serverFolders = await fetchFolders(account, password);
+    for (const sf of serverFolders) {
+      if (!SKIP_FOLDERS.test(sf.path) && !result.includes(sf.path)) {
+        result.push(sf.path);
+      }
+    }
+    console.log(`[sync] folder cache updated for ${account.email}: ${result.join(', ')}`);
+  } catch (e) {
+    console.error(`[sync] fetchFolders failed, using known folders:`, (e as Error).message);
+  }
+
+  folderCache[account.id] = { folders: result, fetchedAt: now };
+  return result;
+}
 
 export async function syncAllAccounts(win?: BrowserWindow): Promise<void> {
   if (isSyncing) return;
@@ -49,14 +92,24 @@ export async function syncAllAccounts(win?: BrowserWindow): Promise<void> {
       }
 
       try {
-        const beforeCount = getUnreadCount(account.id, 'INBOX');
-        const result = await syncFolder(account, password, 'INBOX', 50);
+        const foldersToSync = await getFoldersToSync(account, password);
 
-        // フラグ同期（既読・スター状態をGmailと合わせる）
-        const flagsUpdated = await syncFlags(account, password, 'INBOX').catch(() => 0);
+        let totalAdded = 0;
+        const beforeInboxCount = getUnreadCount(account.id, 'INBOX');
 
-        const afterCount = getUnreadCount(account.id, 'INBOX');
-        const newCount = afterCount - beforeCount;
+        for (const folder of foldersToSync) {
+          try {
+            const result = await syncFolder(account, password, folder, 50);
+            await syncFlags(account, password, folder).catch(() => 0);
+            totalAdded += result.added;
+          } catch (folderErr) {
+            console.error(`[sync] folder=${folder} failed:`, (folderErr as Error).message);
+          }
+        }
+
+        // INBOX の新着通知
+        const afterInboxCount = getUnreadCount(account.id, 'INBOX');
+        const newCount = afterInboxCount - beforeInboxCount;
         if (newCount > 0 && settings.notificationsEnabled) {
           const latest = listEmails(account.id, 'INBOX', 1, 0)[0];
           showNewMailNotification(account.email, newCount, latest
@@ -65,9 +118,17 @@ export async function syncAllAccounts(win?: BrowserWindow): Promise<void> {
           );
         }
 
-        // Always notify renderer to refresh
-        win?.webContents.send('mail:synced', { accountId: account.id, added: result.added });
-        console.log(`[sync] ${account.email}: added=${result.added} blocked=${result.blocked} flags=${flagsUpdated}`);
+        // Dockバッジ更新
+        updateBadge();
+
+        // 未読数をイベントに埋め込んで送信（renderer側でIPC呼び出し不要）
+        const unreadCounts = getAllFolderUnreadCounts(account.id);
+        win?.webContents.send('mail:synced', {
+          accountId: account.id,
+          added: totalAdded,
+          unreadCounts,
+        });
+        console.log(`[sync] ${account.email}: folders=${foldersToSync.length} added=${totalAdded}`);
       } catch (err) {
         console.error(`[sync] Failed for ${account.email}:`, (err as Error).message);
       }

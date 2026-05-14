@@ -41,19 +41,21 @@
   },
   "build": {
     "appId": "com.innovation.mail",
-    "productName": "Mail",
+    "productName": "IM Mail",
     "directories": {
-      "output": "release"
+      "output": "release",
+      "app": "."
     },
     "files": [
       "dist/**/*",
-      "app/out/**/*",
       "node_modules/**/*",
+      "package.json",
       "!node_modules/.cache"
     ],
     "mac": {
       "target": "dmg",
-      "category": "public.app-category.productivity"
+      "category": "public.app-category.productivity",
+      "icon": "build/icon.icns"
     },
     "win": {
       "target": "nsis"

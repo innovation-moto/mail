@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 import { useAccountStore } from '@/store/accountStore';
 import { useMailStore } from '@/store/mailStore';
 import { useUIStore } from '@/store/uiStore';
-import { api } from '@/lib/ipc';
+import { api, isElectron } from '@/lib/ipc';
 import { Sidebar } from './Sidebar';
 import { MailList } from '../mail/MailList';
 import { MailView } from '../mail/MailView';
@@ -14,7 +14,7 @@ import { SetupWizard } from '../settings/SetupWizard';
 
 export function AppShell() {
   const { accounts, loadAccounts, selectedAccountId } = useAccountStore();
-  const { loadEmails, loadFolders, syncEmails, loadUnreadCounts } = useMailStore();
+  const { loadEmails, loadFolders, syncEmails, loadUnreadCounts, setUnreadCounts } = useMailStore();
   const { theme, modal, applyTheme } = useUIStore();
   const [initialized, setInitialized] = useState(false);
 
@@ -47,15 +47,33 @@ export function AppShell() {
     });
   }, [selectedAccountId]);
 
+  // mail:synced イベント：バックグラウンド同期完了時に即座に未読数・メール一覧を更新
   useEffect(() => {
-    // Listen for sync events from main process
-    const unsub = api.on('mail:synced', (data: unknown) => {
-      const { accountId } = data as { accountId: string };
-      if (accountId === selectedAccountId) {
-        loadEmails(selectedAccountId, undefined);
-      }
+    if (!isElectron) return;
+    const unsubscribe = api.on('mail:synced', (data: unknown) => {
+      const { accountId, unreadCounts } = data as { accountId: string; added: number; unreadCounts: Record<string, number> };
+      const currentAccountId = useAccountStore.getState().selectedAccountId;
+      if (accountId !== currentAccountId) return;
+      console.log('[mail:synced] received, unreadCounts:', unreadCounts);
+      setUnreadCounts(unreadCounts);
+      // 現在のフォルダのメール一覧も静かに更新
+      const selectedFolder = useMailStore.getState().selectedFolder;
+      loadEmails(accountId, selectedFolder).catch(() => {});
     });
-    return unsub;
+    return () => { unsubscribe?.(); };
+  }, []);
+
+  // ポーリング：30秒ごとに未読数・現在フォルダを更新（IPC イベントが届かない場合のフォールバック）
+  useEffect(() => {
+    if (!selectedAccountId) return;
+    const timer = setInterval(async () => {
+      console.log('[poll] loadUnreadCounts start, accountId:', selectedAccountId);
+      await loadUnreadCounts(selectedAccountId);
+      const counts = useMailStore.getState().folderUnreadCounts;
+      console.log('[poll] folderUnreadCounts:', counts);
+      loadEmails(selectedAccountId, undefined);
+    }, 30 * 1000);
+    return () => clearInterval(timer);
   }, [selectedAccountId]);
 
   if (!initialized) {

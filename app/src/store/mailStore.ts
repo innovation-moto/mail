@@ -18,6 +18,7 @@ interface MailState {
   inboxUnreadCount: number;
   folderUnreadCounts: Record<string, number>;
   loadUnreadCounts: (accountId: string) => Promise<void>;
+  setUnreadCounts: (counts: Record<string, number>) => void;
 
   loadFolders: (accountId: string) => Promise<void>;
   loadEmails: (accountId: string, folder?: string) => Promise<void>;
@@ -74,7 +75,7 @@ export const useMailStore = create<MailState>((set, get) => ({
       set({ folders });
     } catch (err) {
       console.error('Failed to load folders:', err);
-      set({ folders: [] });
+      // エラー時はフォルダ一覧を消さない（現状維持）
     }
   },
 
@@ -98,6 +99,13 @@ export const useMailStore = create<MailState>((set, get) => ({
         inboxUnreadCount: counts['INBOX'] ?? 0,
       });
     } catch {}
+  },
+
+  setUnreadCounts: (counts) => {
+    set({
+      folderUnreadCounts: counts,
+      inboxUnreadCount: counts['INBOX'] ?? 0,
+    });
   },
 
   selectEmail: (id) => set({ selectedEmailId: id }),

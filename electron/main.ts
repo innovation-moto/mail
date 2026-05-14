@@ -9,6 +9,7 @@ import { registerSettingsHandlers } from './ipc/settings';
 import { registerFilterHandlers } from './ipc/filters';
 import { registerSignatureHandlers } from './ipc/signatures';
 import { startSync, stopSync, syncAllAccounts } from './services/sync';
+import { getTotalUnreadCount } from './db/queries/emails';
 import { getSetting } from './db/queries/settings';
 import { initGemini } from './services/gemini';
 
@@ -92,6 +93,8 @@ app.whenReady().then(() => {
   createWindow();
 
   if (mainWindow) {
+    // 起動時にDBの未読数をバッジに反映
+    try { app.setBadgeCount(getTotalUnreadCount()); } catch { /* 無視 */ }
     // Initial sync after 2 seconds
     setTimeout(() => syncAllAccounts(mainWindow ?? undefined).catch(console.error), 2000);
     startSync(mainWindow);

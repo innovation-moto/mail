@@ -38,6 +38,9 @@ export function Sidebar() {
   const { selectedFolder, folders, selectFolder, syncEmails, syncing, loadEmails, folderUnreadCounts, moveEmail } = useMailStore();
   const { openCompose, openSettings, sidebarCollapsed, toggleSidebar } = useUIStore();
 
+  // アカウント全体の未読数合計（スクロールせずに確認できるように）
+  const totalUnread = Object.values(folderUnreadCounts).reduce((sum, n) => sum + n, 0);
+
   const account = accounts.find((a) => a.id === selectedAccountId);
 
   // SPECIALフォルダと重複するGmailフォルダを除外するパターン
@@ -194,15 +197,37 @@ export function Sidebar() {
       {!sidebarCollapsed && (
         <div className="px-5 py-3 flex-shrink-0">
           <img
-            src="/logo.png"
+            src="logo.png"
             alt="INNOVATION MUSIC"
             className="w-full max-w-[160px] h-auto object-contain dark:hidden"
           />
           <img
-            src="/logo_white.png"
+            src="logo_white.png"
             alt="INNOVATION MUSIC"
             className="w-full max-w-[160px] h-auto object-contain hidden dark:block"
           />
+        </div>
+      )}
+
+      {/* Account switcher (collapsed) */}
+      {sidebarCollapsed && account && (
+        <div className="px-2 pb-2 flex justify-center">
+          <div className="relative">
+            <div className={cn('w-8 h-8 rounded-full flex-shrink-0 overflow-hidden', !account.avatar && getAvatarColor(account.email))}>
+              {account.avatar ? (
+                <img src={account.avatar} alt={account.name} className="w-full h-full object-cover" />
+              ) : (
+                <span className="w-full h-full flex items-center justify-center text-white text-xs font-bold">
+                  {getInitials(account.name, account.email)}
+                </span>
+              )}
+            </div>
+            {totalUnread > 0 && (
+              <span className="absolute -top-1 -right-1 w-4 h-4 bg-blue-500 rounded-full flex items-center justify-center text-white text-[9px] font-bold leading-none">
+                {totalUnread > 9 ? '9+' : totalUnread}
+              </span>
+            )}
+          </div>
         </div>
       )}
 
@@ -228,6 +253,11 @@ export function Sidebar() {
                   <div className="text-sm font-medium truncate dark:text-white">{account.name}</div>
                   <div className="text-xs text-gray-500 truncate">{account.email}</div>
                 </div>
+                {totalUnread > 0 && (
+                  <span className="min-w-[20px] h-5 bg-blue-500 rounded-full flex items-center justify-center text-white text-xs font-bold px-1 flex-shrink-0">
+                    {totalUnread > 99 ? '99+' : totalUnread}
+                  </span>
+                )}
                 {accounts.length > 1 && (
                   <ChevronDown
                     size={14}

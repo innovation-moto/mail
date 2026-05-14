@@ -1,4 +1,4 @@
-import { ipcMain, safeStorage, dialog, shell } from 'electron';
+import { app, ipcMain, safeStorage, dialog, shell } from 'electron';
 import fs from 'fs';
 import { ComposeData } from '../../shared/types';
 import { getAccount, getEncryptedPassword } from '../db/queries/accounts';
@@ -16,7 +16,12 @@ import {
   getAllFolderUnreadCounts,
   getAttachmentContent,
   saveAttachments,
+  getTotalUnreadCount,
 } from '../db/queries/emails';
+
+function refreshBadge(): void {
+  try { app.setBadgeCount(getTotalUnreadCount()); } catch { /* 無視 */ }
+}
 import { syncFolder, fetchFolders, imapMarkRead, imapMarkAllRead, imapPinEmail, imapDeleteEmail, imapMoveEmail, fetchAttachmentsForEmail } from '../services/imap';
 import { sendEmail } from '../services/smtp';
 
@@ -61,6 +66,7 @@ export function registerMailHandlers(): void {
     const email = getEmail(emailId);
     if (!email) return;
     markRead(emailId, isRead);
+    refreshBadge();
     try {
       const account = getAccount(email.accountId);
       if (!account) return;
@@ -71,6 +77,7 @@ export function registerMailHandlers(): void {
 
   ipcMain.handle('mail:markAllRead', async (_e, accountId: string, folder: string) => {
     markAllReadInFolder(accountId, folder);
+    refreshBadge();
     try {
       const account = getAccount(accountId);
       if (!account) return;
