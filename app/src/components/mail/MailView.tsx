@@ -245,28 +245,28 @@ function MailViewContent({
         </h1>
 
         {/* From / To / Date */}
-        <div className="flex items-start justify-between gap-4">
+        <div className="flex items-start justify-between gap-2">
           <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 mb-1">
-              <span className="text-sm font-medium text-gray-900 dark:text-white">
+            <div className="flex items-center gap-1.5 mb-1 min-w-0">
+              <span className="text-sm font-medium text-gray-900 dark:text-white truncate">
                 {email.from.name || email.from.address}
               </span>
               {email.from.name && (
-                <span className="text-xs text-gray-400">&lt;{email.from.address}&gt;</span>
+                <span className="hidden md:inline text-xs text-gray-400 truncate">&lt;{email.from.address}&gt;</span>
               )}
               <button
                 onClick={() => setShowQuickFilter(true)}
                 title="このアドレスでフィルターを作成"
-                className="p-1 rounded hover:bg-blue-50 dark:hover:bg-blue-900/30 text-gray-400 hover:text-blue-500 dark:hover:text-blue-400 transition-colors"
+                className="flex-shrink-0 p-1 rounded hover:bg-blue-50 dark:hover:bg-blue-900/30 text-gray-400 hover:text-blue-500 dark:hover:text-blue-400 transition-colors"
               >
                 <Filter size={12} />
               </button>
             </div>
-            <div className="text-xs text-gray-400">
+            <div className="text-xs text-gray-400 truncate">
               宛先: {email.to.map((t) => t.name || t.address).join(', ')}
             </div>
           </div>
-          <div className="text-xs text-gray-400 flex-shrink-0 pt-0.5">
+          <div className="text-xs text-gray-400 flex-shrink-0 pt-0.5 text-right">
             {formatFullDate(email.date)}
           </div>
         </div>
