@@ -361,23 +361,23 @@ function MailViewContent({
 
         {/* Bottom footer */}
         <div className="flex items-center justify-around px-4 py-3 bg-white dark:bg-gray-900 border-t border-gray-200 dark:border-gray-800">
-          <button
-            onClick={() => onStar(!email.isStarred)}
-            className={cn('p-2', email.isStarred ? 'text-yellow-400' : 'text-gray-400')}
-          >
-            <Circle size={24} strokeWidth={1.5} />
-          </button>
           <button onClick={onReply} className="p-2 text-gray-500 dark:text-gray-400">
             <Reply size={24} strokeWidth={1.5} />
           </button>
-          <button onClick={onDelete} className="p-2 text-gray-500 dark:text-gray-400">
-            <Check size={24} strokeWidth={1.5} />
+          <button onClick={onReplyAll} className="p-2 text-gray-500 dark:text-gray-400">
+            <Reply size={24} strokeWidth={1.5} className="-scale-x-100" />
           </button>
           <button onClick={onForward} className="p-2 text-gray-500 dark:text-gray-400">
             <Forward size={24} strokeWidth={1.5} />
           </button>
-          <button onClick={handleClassify} disabled={classifying} className="p-2 text-gray-500 dark:text-gray-400 disabled:opacity-40">
-            <Clock size={24} strokeWidth={1.5} />
+          <button
+            onClick={() => onStar(!email.isStarred)}
+            className={cn('p-2', email.isStarred ? 'text-yellow-400' : 'text-gray-400')}
+          >
+            <Star size={24} strokeWidth={1.5} />
+          </button>
+          <button onClick={onDelete} className="p-2 text-red-400">
+            <Trash2 size={24} strokeWidth={1.5} />
           </button>
           <button onClick={() => setShowMobileMore(true)} className="p-2 text-gray-500 dark:text-gray-400">
             <MoreHorizontal size={24} strokeWidth={1.5} />
@@ -388,16 +388,18 @@ function MailViewContent({
         {showMobileMore && (
           <>
             <div className="fixed inset-0 bg-black/40 z-40" onClick={() => setShowMobileMore(false)} />
-            <div className="fixed bottom-0 left-0 right-0 z-50 bg-white dark:bg-gray-900 rounded-t-2xl shadow-2xl pb-8">
+            <div className="fixed bottom-0 left-0 right-0 z-50 bg-white dark:bg-gray-900 rounded-t-2xl shadow-2xl pb-10">
               <div className="w-10 h-1 bg-gray-300 dark:bg-gray-600 rounded-full mx-auto mt-3 mb-4" />
               <div className="grid grid-cols-4 gap-1 px-4">
                 {[
-                  { icon: <Trash2 size={22} />, label: '削除', action: () => { onDelete(); setShowMobileMore(false); }, color: 'text-red-500' },
-                  { icon: <Star size={22} />, label: email.isStarred ? 'スター解除' : 'スター', action: () => { onStar(!email.isStarred); setShowMobileMore(false); }, color: email.isStarred ? 'text-yellow-400' : 'text-gray-600' },
-                  { icon: <Pin size={22} />, label: email.isPinned ? 'ピン解除' : 'ピン留め', action: () => { onPin(!email.isPinned); setShowMobileMore(false); }, color: email.isPinned ? 'text-blue-500' : 'text-gray-600' },
-                  { icon: <Sparkles size={22} />, label: '要約', action: () => { handleSummarize(); setShowMobileMore(false); }, color: 'text-purple-500' },
+                  { icon: <Pin size={22} />, label: email.isPinned ? 'ピン解除' : 'ピン留め', action: () => { onPin(!email.isPinned); setShowMobileMore(false); }, color: email.isPinned ? 'text-blue-500' : 'text-gray-600 dark:text-gray-400' },
+                  { icon: <Sparkles size={22} />, label: summarizing ? '要約中…' : '要約', action: () => { handleSummarize(); setShowMobileMore(false); }, color: 'text-purple-500' },
+                  { icon: <Sparkles size={22} />, label: classifying ? '分類中…' : 'AI分類', action: () => { handleClassify(); setShowMobileMore(false); }, color: 'text-blue-500' },
                   { icon: <CalendarPlus size={22} />, label: 'カレンダー', action: () => { handleDetectCalendar(); setShowMobileMore(false); }, color: 'text-green-500' },
-                  { icon: <ShieldBan size={22} />, label: '迷惑メール', action: () => { handleMarkSpam(); setShowMobileMore(false); }, color: 'text-orange-500' },
+                  { icon: <AlertTriangle size={22} />, label: '迷惑メール', action: () => { handleMarkSpam(); setShowMobileMore(false); }, color: 'text-orange-500' },
+                  { icon: <ShieldBan size={22} />, label: 'アドレスブロック', action: () => { handleBlock('address'); setShowMobileMore(false); }, color: 'text-red-500' },
+                  { icon: <ShieldBan size={22} />, label: 'ドメインブロック', action: () => { handleBlock('domain'); setShowMobileMore(false); }, color: 'text-red-400' },
+                  { icon: <Filter size={22} />, label: 'フィルター作成', action: () => { setShowQuickFilter(true); setShowMobileMore(false); }, color: 'text-gray-500' },
                 ].map((item) => (
                   <button
                     key={item.label}
@@ -405,9 +407,14 @@ function MailViewContent({
                     className="flex flex-col items-center gap-1.5 py-3 rounded-xl hover:bg-gray-50 dark:hover:bg-gray-800"
                   >
                     <span className={item.color}>{item.icon}</span>
-                    <span className="text-xs text-gray-600 dark:text-gray-400">{item.label}</span>
+                    <span className="text-xs text-gray-600 dark:text-gray-400 text-center leading-tight">{item.label}</span>
                   </button>
                 ))}
+              </div>
+
+              {/* AI返信生成 */}
+              <div className="mt-3 mx-4 border-t border-gray-100 dark:border-gray-800 pt-3">
+                <AiReplyBar email={email} onReply={onReply} onReplyAll={onReplyAll} onForward={onForward} />
               </div>
             </div>
           </>
