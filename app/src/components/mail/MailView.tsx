@@ -450,7 +450,7 @@ function MailViewContent({
 
       {/* Reply bar */}
       <div className="px-6 py-3 border-t border-gray-200 dark:border-gray-700 flex-shrink-0">
-        <AiReplyBar email={email} onReply={onReply} onReplyAll={onReplyAll} />
+        <AiReplyBar email={email} onReply={onReply} onReplyAll={onReplyAll} onForward={onForward} />
       </div>
 
       {/* Quick Filter Modal */}
@@ -506,10 +506,11 @@ function EmailHtmlView({ html }: { html: string }) {
   );
 }
 
-function AiReplyBar({ email, onReply, onReplyAll }: {
+function AiReplyBar({ email, onReply, onReplyAll, onForward }: {
   email: Email;
   onReply: () => void;
   onReplyAll: () => void;
+  onForward: () => void;
 }) {
   const { openCompose } = useUIStore();
   const [tone, setTone] = useState<AiTone>('polite');
@@ -564,6 +565,13 @@ function AiReplyBar({ email, onReply, onReplyAll }: {
         >
           <Reply size={14} />
           全員に返信
+        </button>
+        <button
+          onClick={onForward}
+          className="flex items-center gap-1.5 px-4 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
+        >
+          <Forward size={14} />
+          転送
         </button>
 
         <div className="flex-1" />
