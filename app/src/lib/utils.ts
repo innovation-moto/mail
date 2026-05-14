@@ -19,6 +19,12 @@ export function formatFullDate(timestamp: number): string {
   return format(new Date(timestamp), 'yyyy年M月d日(E) HH:mm', { locale: ja });
 }
 
+export function formatShortDate(timestamp: number): string {
+  const date = new Date(timestamp);
+  if (isThisYear(date)) return format(date, 'M月d日 HH:mm', { locale: ja });
+  return format(date, 'yyyy/M/d HH:mm', { locale: ja });
+}
+
 export function truncate(str: string, max: number): string {
   return str.length <= max ? str : str.slice(0, max) + '…';
 }

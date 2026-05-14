@@ -4,13 +4,14 @@ import {
   Reply, Forward, Trash2, Star, StarOff, Pin, PinOff, MoreHorizontal,
   Sparkles, ChevronDown, Paperclip, X, Copy, Check,
   FolderInput, ShieldBan, Filter, Plus, Loader2, Download, AlertTriangle, CalendarPlus, ChevronLeft,
+  Circle, Clock, UserPlus,
 } from 'lucide-react';
 import { useAccountStore } from '@/store/accountStore';
 import { useMailStore } from '@/store/mailStore';
 import { useUIStore } from '@/store/uiStore';
 import { api } from '@/lib/ipc';
 import { AiSummarizeResult, AiTone, CalendarEvent, Email, FilterCondition } from '@/types/shared';
-import { cn, formatFullDate, CATEGORY_LABELS, PRIORITY_LABELS, PRIORITY_COLORS } from '@/lib/utils';
+import { cn, formatFullDate, formatShortDate, CATEGORY_LABELS, PRIORITY_LABELS, PRIORITY_COLORS } from '@/lib/utils';
 
 export function MailView() {
   const { selectedAccountId } = useAccountStore();
@@ -79,6 +80,18 @@ export function MailView() {
   );
 }
 
+function useMobile() {
+  const [isMobile, setIsMobile] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia('(max-width: 767px)');
+    setIsMobile(mq.matches);
+    const handler = (e: MediaQueryListEvent) => setIsMobile(e.matches);
+    mq.addEventListener('change', handler);
+    return () => mq.removeEventListener('change', handler);
+  }, []);
+  return isMobile;
+}
+
 function MailViewContent({
   email, accountId, onStar, onPin, onDelete, onReply, onReplyAll, onForward, onUpdateAi, onBack,
 }: {
@@ -93,6 +106,7 @@ function MailViewContent({
   onUpdateAi: (patch: Partial<Email>) => void;
   onBack?: () => void;
 }) {
+  const isMobile = useMobile();
   const { updateEmailLocally } = useMailStore();
   const [bodyLoading, setBodyLoading] = useState(false);
   const [summarizing, setSummarizing] = useState(false);
@@ -103,6 +117,7 @@ function MailViewContent({
   const [showSummary, setShowSummary] = useState(false);
   const [showMore, setShowMore] = useState(false);
   const [blockMenuOpen, setBlockMenuOpen] = useState(false);
+  const [showMobileMore, setShowMobileMore] = useState(false);
   const [showQuickFilter, setShowQuickFilter] = useState(false);
   const [fetchingAttachments, setFetchingAttachments] = useState(false);
   const [detectingCalendar, setDetectingCalendar] = useState(false);
@@ -224,6 +239,194 @@ function MailViewContent({
   }
 
   const bodyLength = email.bodyText.length;
+
+  // ─── モバイル専用レイアウト ───────────────────────────────────────────────────
+  if (isMobile) {
+    return (
+      <div className="flex flex-col h-full bg-gray-100 dark:bg-gray-950">
+        {/* Top navbar */}
+        <div className="flex items-center justify-between px-4 pt-3 pb-2">
+          {onBack ? (
+            <button
+              onClick={onBack}
+              className="w-10 h-10 flex items-center justify-center rounded-full bg-white dark:bg-gray-800 shadow-sm"
+            >
+              <ChevronLeft size={20} strokeWidth={2.5} className="text-gray-700 dark:text-gray-300" />
+            </button>
+          ) : <div className="w-10" />}
+
+          <div className="flex items-center gap-1 bg-white dark:bg-gray-800 rounded-full px-4 py-2 shadow-sm">
+            <button
+              onClick={() => onPin(!email.isPinned)}
+              className={cn('p-1.5 transition-colors', email.isPinned ? 'text-blue-500' : 'text-gray-500 dark:text-gray-400')}
+            >
+              <Pin size={19} />
+            </button>
+            <button
+              onClick={handleSummarize}
+              disabled={summarizing}
+              className="p-1.5 text-gray-500 dark:text-gray-400 disabled:opacity-40"
+            >
+              <Sparkles size={19} />
+            </button>
+            <button
+              onClick={() => setShowQuickFilter(true)}
+              className="p-1.5 text-gray-500 dark:text-gray-400"
+            >
+              <UserPlus size={19} />
+            </button>
+          </div>
+        </div>
+
+        {/* Subject */}
+        <div className="px-4 pb-3">
+          <h1 className="text-2xl font-bold text-gray-900 dark:text-white leading-tight">
+            {email.subject}
+          </h1>
+        </div>
+
+        {/* Email card(s) */}
+        <div className="flex-1 overflow-y-auto space-y-2 pb-2">
+          <div className="bg-white dark:bg-gray-900">
+            {/* Card header */}
+            <div className="px-4 pt-4 pb-2">
+              <div className="flex items-start justify-between gap-2">
+                <div className="flex-1 min-w-0">
+                  <div className="font-semibold text-gray-900 dark:text-white truncate">
+                    {email.from.name || email.from.address}
+                  </div>
+                  <div className="text-sm text-blue-500 truncate">
+                    宛先: {email.to.map((t) => t.name || t.address).join(', ')}
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 flex-shrink-0">
+                  <span className="text-xs text-gray-400">{formatShortDate(email.date)}</span>
+                  <button className="text-gray-400" onClick={() => setShowMobileMore(true)}>
+                    <MoreHorizontal size={16} />
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* AI Summary */}
+            {showSummary && summaryResult && (
+              <div className="mx-4 mb-3 p-3 bg-purple-50 dark:bg-purple-900/20 rounded-xl border border-purple-200 dark:border-purple-800">
+                <div className="flex items-center justify-between mb-1.5">
+                  <div className="flex items-center gap-1.5 text-xs font-medium text-purple-600 dark:text-purple-400">
+                    <Sparkles size={12} /> AI 要約
+                  </div>
+                  <button onClick={() => setShowSummary(false)}><X size={13} className="text-gray-400" /></button>
+                </div>
+                <p className="text-sm text-gray-700 dark:text-gray-300">{summaryResult.summary}</p>
+              </div>
+            )}
+
+            {/* Body */}
+            <div className="px-4 pb-4 min-h-16">
+              {bodyLoading ? (
+                <div className="flex items-center justify-center h-16">
+                  <Loader2 size={20} className="animate-spin text-blue-400" />
+                </div>
+              ) : email.bodyHtml ? (
+                <EmailHtmlView html={email.bodyHtml} />
+              ) : email.bodyText ? (
+                <pre className="text-sm text-gray-700 dark:text-gray-300 whitespace-pre-wrap font-sans leading-relaxed">
+                  {email.bodyText}
+                </pre>
+              ) : null}
+            </div>
+
+            {/* Attachments */}
+            {email.hasAttachments && localAttachments.length > 0 && (
+              <div className="px-4 pb-3 border-t border-gray-100 dark:border-gray-800 pt-3">
+                <div className="flex flex-wrap gap-2">
+                  {localAttachments.map((att) => (
+                    <AttachmentChip key={att.id} attachment={att} />
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Card footer: reply / forward */}
+            <div className="flex justify-end gap-5 px-4 py-3 border-t border-gray-100 dark:border-gray-800">
+              <button onClick={onReply} className="text-gray-300 dark:text-gray-600 active:text-blue-500 transition-colors">
+                <Reply size={21} strokeWidth={1.5} />
+              </button>
+              <button onClick={onForward} className="text-gray-300 dark:text-gray-600 active:text-blue-500 transition-colors">
+                <Forward size={21} strokeWidth={1.5} />
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Bottom footer */}
+        <div className="flex items-center justify-around px-4 py-3 bg-white dark:bg-gray-900 border-t border-gray-200 dark:border-gray-800">
+          <button
+            onClick={() => onStar(!email.isStarred)}
+            className={cn('p-2', email.isStarred ? 'text-yellow-400' : 'text-gray-400')}
+          >
+            <Circle size={24} strokeWidth={1.5} />
+          </button>
+          <button onClick={onReply} className="p-2 text-gray-500 dark:text-gray-400">
+            <Reply size={24} strokeWidth={1.5} />
+          </button>
+          <button onClick={onDelete} className="p-2 text-gray-500 dark:text-gray-400">
+            <Check size={24} strokeWidth={1.5} />
+          </button>
+          <button onClick={onForward} className="p-2 text-gray-500 dark:text-gray-400">
+            <Forward size={24} strokeWidth={1.5} />
+          </button>
+          <button onClick={handleClassify} disabled={classifying} className="p-2 text-gray-500 dark:text-gray-400 disabled:opacity-40">
+            <Clock size={24} strokeWidth={1.5} />
+          </button>
+          <button onClick={() => setShowMobileMore(true)} className="p-2 text-gray-500 dark:text-gray-400">
+            <MoreHorizontal size={24} strokeWidth={1.5} />
+          </button>
+        </div>
+
+        {/* Mobile More Bottom Sheet */}
+        {showMobileMore && (
+          <>
+            <div className="fixed inset-0 bg-black/40 z-40" onClick={() => setShowMobileMore(false)} />
+            <div className="fixed bottom-0 left-0 right-0 z-50 bg-white dark:bg-gray-900 rounded-t-2xl shadow-2xl pb-8">
+              <div className="w-10 h-1 bg-gray-300 dark:bg-gray-600 rounded-full mx-auto mt-3 mb-4" />
+              <div className="grid grid-cols-4 gap-1 px-4">
+                {[
+                  { icon: <Trash2 size={22} />, label: '削除', action: () => { onDelete(); setShowMobileMore(false); }, color: 'text-red-500' },
+                  { icon: <Star size={22} />, label: email.isStarred ? 'スター解除' : 'スター', action: () => { onStar(!email.isStarred); setShowMobileMore(false); }, color: email.isStarred ? 'text-yellow-400' : 'text-gray-600' },
+                  { icon: <Pin size={22} />, label: email.isPinned ? 'ピン解除' : 'ピン留め', action: () => { onPin(!email.isPinned); setShowMobileMore(false); }, color: email.isPinned ? 'text-blue-500' : 'text-gray-600' },
+                  { icon: <Sparkles size={22} />, label: '要約', action: () => { handleSummarize(); setShowMobileMore(false); }, color: 'text-purple-500' },
+                  { icon: <CalendarPlus size={22} />, label: 'カレンダー', action: () => { handleDetectCalendar(); setShowMobileMore(false); }, color: 'text-green-500' },
+                  { icon: <ShieldBan size={22} />, label: '迷惑メール', action: () => { handleMarkSpam(); setShowMobileMore(false); }, color: 'text-orange-500' },
+                ].map((item) => (
+                  <button
+                    key={item.label}
+                    onClick={item.action}
+                    className="flex flex-col items-center gap-1.5 py-3 rounded-xl hover:bg-gray-50 dark:hover:bg-gray-800"
+                  >
+                    <span className={item.color}>{item.icon}</span>
+                    <span className="text-xs text-gray-600 dark:text-gray-400">{item.label}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          </>
+        )}
+
+        {/* Quick Filter Modal */}
+        {showQuickFilter && (
+          <QuickFilterModal
+            email={email}
+            accountId={accountId}
+            onClose={() => setShowQuickFilter(false)}
+          />
+        )}
+      </div>
+    );
+  }
+
+  // ─── デスクトップレイアウト ────────────────────────────────────────────────────
+  void bodyLength;
 
   return (
     <>
