@@ -2,6 +2,7 @@ import { NextApiRequest, NextApiResponse } from 'next';
 import { getAuthUser } from '@/lib/apiAuth';
 import { decrypt } from '@/lib/crypto';
 import nodemailer from 'nodemailer';
+import { ImapFlow } from 'imapflow';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') return res.status(405).end();
@@ -28,12 +29,42 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   });
 
   try {
-    await transporter.sendMail({
-      from: `${account.name} <${account.email}>`,
+    const info = await transporter.sendMail({
+      from: `"${account.name}" <${account.email}>`,
       to, cc, bcc, subject,
       text: body,
       inReplyTo: replyToMessageId,
     });
+
+    // IMAPのSentフォルダに保存
+    const raw: Buffer = (info as any).message?.build
+      ? await new Promise((resolve, reject) => {
+          (info as any).message.build((err: Error, buf: Buffer) => err ? reject(err) : resolve(buf));
+        })
+      : Buffer.from('');
+
+    if (raw.length > 0) {
+      const client = new ImapFlow({
+        host: account.imap_host, port: account.imap_port, secure: account.imap_secure,
+        auth: { user: account.email, pass: password },
+        logger: false, tls: { rejectUnauthorized: false },
+      });
+      try {
+        await client.connect();
+        const list = await client.list();
+        const sentFolder =
+          list.find((f: any) => f.specialUse === '\\Sent')?.path ||
+          list.find((f: any) => /^(Sent|Sent Items|送信済み|Sent Mail)$/i.test(f.name))?.path ||
+          list.find((f: any) => /sent/i.test(f.path))?.path ||
+          'Sent';
+        await client.append(sentFolder, raw, ['\\Seen']);
+      } catch (e) {
+        console.error('[send] append to Sent failed:', (e as Error).message);
+      } finally {
+        try { await client.logout(); } catch { /* ignore */ }
+      }
+    }
+
     return res.json({ ok: true });
   } catch (e) {
     return res.status(500).json({ error: (e as Error).message });

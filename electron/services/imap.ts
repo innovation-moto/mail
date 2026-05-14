@@ -451,3 +451,28 @@ export async function imapMoveEmail(
     await safeLogout(client);
   }
 }
+
+export async function imapAppendToSent(
+  account: Account,
+  password: string,
+  rawMessage: Buffer,
+): Promise<void> {
+  const client = createClient(account, password);
+  try {
+    await client.connect();
+    // Sentフォルダを特定（specialUse \Sent → 一般的な名前の順で探す）
+    const list = await client.list();
+    const sentFolder =
+      list.find((f) => (f as any).specialUse === '\\Sent')?.path ||
+      list.find((f) => /^(Sent|Sent Items|送信済み|Sent Mail)$/i.test(f.name))?.path ||
+      list.find((f) => /sent/i.test(f.path))?.path ||
+      'Sent';
+    await client.append(sentFolder, rawMessage, ['\\Seen']);
+    console.log(`[smtp] appended to Sent folder: ${sentFolder}`);
+  } catch (e) {
+    // Sentフォルダへの保存失敗はエラーにしない（送信自体は成功）
+    console.error('[smtp] append to Sent failed:', (e as Error).message);
+  } finally {
+    await safeLogout(client);
+  }
+}

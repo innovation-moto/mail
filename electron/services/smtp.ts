@@ -71,7 +71,18 @@ export async function sendEmail(account: Account, password: string, data: Compos
   }
 
   try {
-    await transporter.sendMail(mailOptions);
+    // 送信 & rawメッセージを取得してSentフォルダに保存
+    const info = await transporter.sendMail(mailOptions);
+    const raw: Buffer = (info as any).message?.getMessageId
+      ? await new Promise((resolve, reject) => {
+          (info as any).message.build((err: Error, buf: Buffer) => err ? reject(err) : resolve(buf));
+        })
+      : Buffer.from('');
+
+    if (raw.length > 0) {
+      const { imapAppendToSent } = await import('./imap');
+      await imapAppendToSent(account, password, raw);
+    }
   } finally {
     transporter.close();
   }
