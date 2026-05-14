@@ -11,13 +11,21 @@ import { ComposeModal } from '../mail/ComposeModal';
 import { AccountSetupModal } from '../settings/AccountSetupModal';
 import { SettingsModal } from '../settings/SettingsModal';
 import { SetupWizard } from '../settings/SetupWizard';
-import { cn } from '@/lib/utils';
 
 export function AppShell() {
   const { accounts, loadAccounts, selectedAccountId } = useAccountStore();
   const { loadEmails, loadFolders, syncEmails, loadUnreadCounts, setUnreadCounts } = useMailStore();
   const { theme, modal, applyTheme, mobilePanel, mobileSidebarOpen, setMobileSidebarOpen } = useUIStore();
   const [initialized, setInitialized] = useState(false);
+  const [isDesktop, setIsDesktop] = useState(false);
+
+  useEffect(() => {
+    const mq = window.matchMedia('(min-width: 768px)');
+    setIsDesktop(mq.matches);
+    const handler = (e: MediaQueryListEvent) => setIsDesktop(e.matches);
+    mq.addEventListener('change', handler);
+    return () => mq.removeEventListener('change', handler);
+  }, []);
 
   useEffect(() => {
     const init = async () => {
@@ -102,42 +110,50 @@ export function AppShell() {
   return (
     <div className="flex h-screen overflow-hidden bg-white dark:bg-gray-900 relative">
       {/* モバイル：サイドバーのバックドロップ */}
-      {mobileSidebarOpen && (
+      {!isDesktop && mobileSidebarOpen && (
         <div
-          className="md:hidden fixed inset-0 bg-black/50 z-40"
+          className="fixed inset-0 bg-black/50 z-40"
           onClick={() => setMobileSidebarOpen(false)}
         />
       )}
 
       {/* デスクトップ：常に表示されるサイドバー */}
-      <div className="hidden md:flex flex-shrink-0">
-        <Sidebar />
-      </div>
+      {isDesktop && (
+        <div className="flex flex-shrink-0">
+          <Sidebar />
+        </div>
+      )}
 
       {/* モバイル：ドロワーサイドバー */}
-      {mobileSidebarOpen && (
-        <div className="md:hidden fixed inset-y-0 left-0 z-50 flex shadow-2xl">
+      {!isDesktop && mobileSidebarOpen && (
+        <div className="fixed inset-y-0 left-0 z-50 flex shadow-2xl">
           <Sidebar onMobileClose={() => setMobileSidebarOpen(false)} />
         </div>
       )}
 
-      {/* メールリストパネル（モバイルは1画面ずつ） */}
-      <div className={cn(
-        'flex-col',
-        mobilePanel === 'list' ? 'flex flex-1' : 'hidden',
-        'md:flex md:flex-none',
-      )}>
-        <MailList />
-      </div>
+      {/* モバイル：アクティブパネルのみレンダリング */}
+      {!isDesktop && mobilePanel === 'list' && (
+        <div className="flex flex-col flex-1 min-w-0">
+          <MailList />
+        </div>
+      )}
+      {!isDesktop && mobilePanel === 'mail' && (
+        <div className="flex flex-col flex-1 min-w-0">
+          <MailView />
+        </div>
+      )}
 
-      {/* メール本文パネル（モバイルは1画面ずつ） */}
-      <div className={cn(
-        'flex-1 flex-col min-w-0',
-        mobilePanel === 'mail' ? 'flex' : 'hidden',
-        'md:flex',
-      )}>
-        <MailView />
-      </div>
+      {/* デスクトップ：両パネルを並べて表示 */}
+      {isDesktop && (
+        <>
+          <div className="flex flex-col flex-none" style={{ width: '320px' }}>
+            <MailList />
+          </div>
+          <div className="flex flex-col flex-1 min-w-0">
+            <MailView />
+          </div>
+        </>
+      )}
 
       {modal === 'compose' && <ComposeModal />}
       {modal === 'accountSetup' && <AccountSetupModal />}
