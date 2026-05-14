@@ -94,6 +94,7 @@ function MailViewContent({
   onBack?: () => void;
 }) {
   const { updateEmailLocally } = useMailStore();
+  const [bodyLoading, setBodyLoading] = useState(false);
   const [summarizing, setSummarizing] = useState(false);
   const [classifying, setClassifying] = useState(false);
   const [summaryResult, setSummaryResult] = useState<AiSummarizeResult | null>(
@@ -115,6 +116,24 @@ function MailViewContent({
     setLocalAttachments(email.attachments ?? []);
     setCalendarEvent(null);
     setCalendarAdded(false);
+  }, [email.id]);
+
+  // メール選択時に本文をIMAPからオンデマンド取得（Web版）
+  useEffect(() => {
+    if (!email.bodyText && !email.bodyHtml && !bodyLoading) {
+      setBodyLoading(true);
+      api.mail.fetchEmail(email.id)
+        .then((fullEmail) => {
+          if (fullEmail?.bodyText || fullEmail?.bodyHtml) {
+            updateEmailLocally(email.id, {
+              bodyText: fullEmail.bodyText,
+              bodyHtml: fullEmail.bodyHtml,
+            });
+          }
+        })
+        .catch(console.error)
+        .finally(() => setBodyLoading(false));
+    }
   }, [email.id]);
 
   // 添付ファイルがあるはずなのにDBに保存されていない場合、自動取得
@@ -272,8 +291,8 @@ function MailViewContent({
           </div>
         )}
 
-        {/* Action bar */}
-        <div className="flex items-center gap-1 mt-3">
+        {/* Action bar - horizontally scrollable on mobile */}
+        <div className="flex items-center gap-1 mt-3 overflow-x-auto scrollbar-none -mx-1 px-1">
           <ActionButton
             icon={email.isStarred ? <StarOff size={15} /> : <Star size={15} />}
             label={email.isStarred ? 'スター解除' : 'スター'}
@@ -287,13 +306,13 @@ function MailViewContent({
           />
           <ActionButton icon={<Trash2 size={15} />} label="削除" onClick={onDelete} variant="danger" />
 
-          <div className="flex-1" />
+          <div className="flex-shrink-0 w-2" />
 
           {/* AI actions */}
           <button
             onClick={handleSummarize}
             disabled={summarizing}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 hover:bg-purple-200 dark:hover:bg-purple-900/50 disabled:opacity-50 transition-colors"
+            className="flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 hover:bg-purple-200 dark:hover:bg-purple-900/50 disabled:opacity-50 transition-colors"
           >
             <Sparkles size={13} />
             {summarizing ? '要約中…' : '要約'}
@@ -302,7 +321,7 @@ function MailViewContent({
           <button
             onClick={handleClassify}
             disabled={classifying}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 hover:bg-blue-200 dark:hover:bg-blue-900/50 disabled:opacity-50 transition-colors"
+            className="flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 hover:bg-blue-200 dark:hover:bg-blue-900/50 disabled:opacity-50 transition-colors"
           >
             <Sparkles size={13} />
             {classifying ? '分類中…' : 'AI分類'}
@@ -311,14 +330,14 @@ function MailViewContent({
           <button
             onClick={handleDetectCalendar}
             disabled={detectingCalendar}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 hover:bg-green-200 dark:hover:bg-green-900/50 disabled:opacity-50 transition-colors"
+            className="flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 hover:bg-green-200 dark:hover:bg-green-900/50 disabled:opacity-50 transition-colors"
           >
             <CalendarPlus size={13} />
             {detectingCalendar ? '検出中…' : 'カレンダー'}
           </button>
 
           {/* Spam / Block menu */}
-          <div className="relative">
+          <div className="relative flex-shrink-0">
             <button
               onClick={() => setBlockMenuOpen(!blockMenuOpen)}
               className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-500"
@@ -428,13 +447,20 @@ function MailViewContent({
       )}
 
       {/* Email body */}
-      <div className="flex-1 overflow-y-auto scrollbar-thin px-6 py-4">
-        {email.bodyHtml ? (
+      <div className="flex-1 overflow-y-auto scrollbar-thin px-4 md:px-6 py-4">
+        {bodyLoading ? (
+          <div className="flex items-center justify-center h-24 gap-2 text-gray-400">
+            <Loader2 size={16} className="animate-spin" />
+            <span className="text-sm">本文を読み込み中…</span>
+          </div>
+        ) : email.bodyHtml ? (
           <EmailHtmlView html={email.bodyHtml} />
-        ) : (
+        ) : email.bodyText ? (
           <pre className="text-sm text-gray-700 dark:text-gray-300 whitespace-pre-wrap font-sans leading-relaxed">
             {email.bodyText}
           </pre>
+        ) : (
+          <p className="text-sm text-gray-400 text-center py-8">本文がありません</p>
         )}
       </div>
 
@@ -461,7 +487,7 @@ function MailViewContent({
       )}
 
       {/* Reply bar */}
-      <div className="px-6 py-3 border-t border-gray-200 dark:border-gray-700 flex-shrink-0">
+      <div className="px-4 md:px-6 py-3 border-t border-gray-200 dark:border-gray-700 flex-shrink-0">
         <AiReplyBar email={email} onReply={onReply} onReplyAll={onReplyAll} onForward={onForward} />
       </div>
 
@@ -563,31 +589,33 @@ function AiReplyBar({ email, onReply, onReplyAll, onForward }: {
 
   return (
     <div className="space-y-2">
+      {/* Row 1: 返信・転送ボタン */}
       <div className="flex items-center gap-2">
         <button
           onClick={onReply}
-          className="flex items-center gap-1.5 px-4 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors"
+          className="flex items-center gap-1.5 px-3 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors"
         >
           <Reply size={14} />
           返信
         </button>
         <button
           onClick={onReplyAll}
-          className="flex items-center gap-1.5 px-4 py-2 text-sm rounded-lg border border-blue-300 dark:border-blue-700 text-blue-700 dark:text-blue-300 hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors"
+          className="flex items-center gap-1.5 px-3 py-2 text-sm rounded-lg border border-blue-300 dark:border-blue-700 text-blue-700 dark:text-blue-300 hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors"
         >
           <Reply size={14} />
-          全員に返信
+          <span className="hidden sm:inline">全員に</span>返信
         </button>
         <button
           onClick={onForward}
-          className="flex items-center gap-1.5 px-4 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
+          className="flex items-center gap-1.5 px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
         >
           <Forward size={14} />
           転送
         </button>
+      </div>
 
-        <div className="flex-1" />
-
+      {/* Row 2: AIトーン + 生成ボタン */}
+      <div className="flex items-center gap-1 flex-wrap">
         {/* AI reply generation */}
         <div className="flex items-center gap-1">
           {tones.map((t) => (

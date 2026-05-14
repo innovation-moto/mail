@@ -124,8 +124,8 @@ export function AppShell() {
       {/* メールリストパネル（モバイルは1画面ずつ） */}
       <div className={cn(
         'flex-col',
-        mobilePanel === 'list' ? 'flex' : 'hidden',
-        'md:flex',
+        mobilePanel === 'list' ? 'flex flex-1' : 'hidden',
+        'md:flex md:flex-none',
       )}>
         <MailList />
       </div>
