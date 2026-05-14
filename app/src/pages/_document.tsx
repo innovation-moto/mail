@@ -4,6 +4,7 @@ export default function Document() {
   return (
     <Html lang="ja" suppressHydrationWarning>
       <Head>
+        <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
         <link rel="manifest" href="/manifest.json" />
         <meta name="theme-color" content="#2563eb" />
         <link rel="apple-touch-icon" href="/icon-192.png" />
