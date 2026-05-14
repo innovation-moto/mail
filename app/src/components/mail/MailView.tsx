@@ -291,91 +291,94 @@ function MailViewContent({
           </div>
         )}
 
-        {/* Action bar - horizontally scrollable on mobile */}
-        <div className="flex flex-nowrap items-center gap-1 mt-3 overflow-x-auto scrollbar-none -mx-1 px-1">
-          <ActionButton
-            icon={email.isStarred ? <StarOff size={15} /> : <Star size={15} />}
-            label={email.isStarred ? 'スター解除' : 'スター'}
-            onClick={() => onStar(!email.isStarred)}
-          />
-          <ActionButton
-            icon={email.isPinned ? <PinOff size={15} /> : <Pin size={15} />}
-            label={email.isPinned ? 'ピン解除' : 'ピン留め'}
-            onClick={() => onPin(!email.isPinned)}
-            active={email.isPinned}
-          />
-          <ActionButton icon={<Trash2 size={15} />} label="削除" onClick={onDelete} variant="danger" />
+        {/* Action bar - 2段組 */}
+        <div className="flex flex-col gap-1.5 mt-3">
+          {/* 1段目：基本操作 */}
+          <div className="flex items-center gap-1">
+            <ActionButton
+              icon={email.isStarred ? <StarOff size={15} /> : <Star size={15} />}
+              label={email.isStarred ? 'スター解除' : 'スター'}
+              onClick={() => onStar(!email.isStarred)}
+            />
+            <ActionButton
+              icon={email.isPinned ? <PinOff size={15} /> : <Pin size={15} />}
+              label={email.isPinned ? 'ピン解除' : 'ピン留め'}
+              onClick={() => onPin(!email.isPinned)}
+              active={email.isPinned}
+            />
+            <ActionButton icon={<Trash2 size={15} />} label="削除" onClick={onDelete} variant="danger" />
+          </div>
 
-          <div className="flex-shrink-0 w-2" />
-
-          {/* AI actions */}
-          <button
-            onClick={handleSummarize}
-            disabled={summarizing}
-            className="flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 hover:bg-purple-200 dark:hover:bg-purple-900/50 disabled:opacity-50 transition-colors whitespace-nowrap"
-          >
-            <Sparkles size={13} />
-            {summarizing ? '要約中…' : '要約'}
-          </button>
-
-          <button
-            onClick={handleClassify}
-            disabled={classifying}
-            className="flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 hover:bg-blue-200 dark:hover:bg-blue-900/50 disabled:opacity-50 transition-colors whitespace-nowrap"
-          >
-            <Sparkles size={13} />
-            {classifying ? '分類中…' : 'AI分類'}
-          </button>
-
-          <button
-            onClick={handleDetectCalendar}
-            disabled={detectingCalendar}
-            className="flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 hover:bg-green-200 dark:hover:bg-green-900/50 disabled:opacity-50 transition-colors whitespace-nowrap"
-          >
-            <CalendarPlus size={13} />
-            {detectingCalendar ? '検出中…' : 'カレンダー'}
-          </button>
-
-          {/* Spam / Block menu */}
-          <div className="relative flex-shrink-0">
+          {/* 2段目：AI操作 */}
+          <div className="flex items-center gap-1">
             <button
-              onClick={() => setBlockMenuOpen(!blockMenuOpen)}
-              className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-500"
-              title="迷惑メール・ブロック"
+              onClick={handleSummarize}
+              disabled={summarizing}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 hover:bg-purple-200 dark:hover:bg-purple-900/50 disabled:opacity-50 transition-colors whitespace-nowrap"
             >
-              <ShieldBan size={15} />
+              <Sparkles size={13} />
+              {summarizing ? '要約中…' : '要約'}
             </button>
-            {blockMenuOpen && (
-              <>
-                <div className="fixed inset-0 z-10" onClick={() => setBlockMenuOpen(false)} />
-                <div className="absolute right-0 top-full mt-1 w-56 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg z-20 py-1">
-                  <div className="px-3 py-1.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">迷惑メール</div>
-                  <button
-                    onClick={handleMarkSpam}
-                    className="w-full text-left px-4 py-2 text-sm text-orange-600 dark:text-orange-400 hover:bg-gray-50 dark:hover:bg-gray-700 flex items-center gap-2"
-                  >
-                    <AlertTriangle size={14} />
-                    迷惑メールとして報告
-                  </button>
-                  <div className="border-t border-gray-100 dark:border-gray-700 my-1" />
-                  <div className="px-3 py-1.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">ブロック</div>
-                  <button
-                    onClick={() => handleBlock('address')}
-                    className="w-full text-left px-4 py-2 text-sm text-red-600 dark:text-red-400 hover:bg-gray-50 dark:hover:bg-gray-700 flex items-center gap-2"
-                  >
-                    <ShieldBan size={14} />
-                    このアドレスをブロック
-                  </button>
-                  <button
-                    onClick={() => handleBlock('domain')}
-                    className="w-full text-left px-4 py-2 text-sm text-red-600 dark:text-red-400 hover:bg-gray-50 dark:hover:bg-gray-700 flex items-center gap-2"
-                  >
-                    <ShieldBan size={14} />
-                    このドメインをブロック
-                  </button>
-                </div>
-              </>
-            )}
+
+            <button
+              onClick={handleClassify}
+              disabled={classifying}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 hover:bg-blue-200 dark:hover:bg-blue-900/50 disabled:opacity-50 transition-colors whitespace-nowrap"
+            >
+              <Sparkles size={13} />
+              {classifying ? '分類中…' : 'AI分類'}
+            </button>
+
+            <button
+              onClick={handleDetectCalendar}
+              disabled={detectingCalendar}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 hover:bg-green-200 dark:hover:bg-green-900/50 disabled:opacity-50 transition-colors whitespace-nowrap"
+            >
+              <CalendarPlus size={13} />
+              {detectingCalendar ? '検出中…' : 'カレンダー'}
+            </button>
+
+            {/* Spam / Block menu */}
+            <div className="relative">
+              <button
+                onClick={() => setBlockMenuOpen(!blockMenuOpen)}
+                className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-500"
+                title="迷惑メール・ブロック"
+              >
+                <ShieldBan size={15} />
+              </button>
+              {blockMenuOpen && (
+                <>
+                  <div className="fixed inset-0 z-10" onClick={() => setBlockMenuOpen(false)} />
+                  <div className="absolute left-0 top-full mt-1 w-56 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg z-20 py-1">
+                    <div className="px-3 py-1.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">迷惑メール</div>
+                    <button
+                      onClick={handleMarkSpam}
+                      className="w-full text-left px-4 py-2 text-sm text-orange-600 dark:text-orange-400 hover:bg-gray-50 dark:hover:bg-gray-700 flex items-center gap-2"
+                    >
+                      <AlertTriangle size={14} />
+                      迷惑メールとして報告
+                    </button>
+                    <div className="border-t border-gray-100 dark:border-gray-700 my-1" />
+                    <div className="px-3 py-1.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">ブロック</div>
+                    <button
+                      onClick={() => handleBlock('address')}
+                      className="w-full text-left px-4 py-2 text-sm text-red-600 dark:text-red-400 hover:bg-gray-50 dark:hover:bg-gray-700 flex items-center gap-2"
+                    >
+                      <ShieldBan size={14} />
+                      このアドレスをブロック
+                    </button>
+                    <button
+                      onClick={() => handleBlock('domain')}
+                      className="w-full text-left px-4 py-2 text-sm text-red-600 dark:text-red-400 hover:bg-gray-50 dark:hover:bg-gray-700 flex items-center gap-2"
+                    >
+                      <ShieldBan size={14} />
+                      このドメインをブロック
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
           </div>
         </div>
       </div>
