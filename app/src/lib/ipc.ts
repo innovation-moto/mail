@@ -1,4 +1,13 @@
 import { supabase } from './supabase';
+import type {
+  AccountConfig,
+  ComposeData,
+  AiTone,
+  CalendarEvent,
+  Settings,
+  FilterRule,
+  Signature,
+} from '@/types/shared';
 
 export const isElectron = typeof window !== 'undefined' && 'electronAPI' in window;
 
@@ -32,18 +41,18 @@ export const api = {
     list: () => isElectron
       ? getAPI().accounts.list()
       : webFetch('/api/accounts'),
-    create: (config: unknown) => isElectron
+    create: (config: AccountConfig) => isElectron
       ? getAPI().accounts.create(config)
       : webFetch('/api/accounts', { method: 'POST', body: JSON.stringify(config) }),
-    update: (id: string, config: unknown) => isElectron
+    update: (id: string, config: Partial<AccountConfig>) => isElectron
       ? getAPI().accounts.update(id, config)
       : webFetch(`/api/accounts/${id}`, { method: 'PATCH', body: JSON.stringify(config) }),
     delete: (id: string) => isElectron
       ? getAPI().accounts.delete(id)
       : webFetch(`/api/accounts/${id}`, { method: 'DELETE' }),
-    test: (config: unknown) => isElectron
+    test: (config: AccountConfig) => isElectron
       ? getAPI().accounts.test(config)
-      : Promise.resolve({ ok: true }), // Web版ではアカウント追加時に自動テスト
+      : Promise.resolve({ imap: true, smtp: true }), // Web版ではアカウント追加時に自動テスト
     connectMicrosoft: (name: string) => isElectron
       ? getAPI().accounts.connectMicrosoft(name)
       : Promise.reject(new Error('Web版では未対応')),
@@ -61,7 +70,7 @@ export const api = {
     sync: (accountId: string, folder?: string) => isElectron
       ? getAPI().mail.sync(accountId, folder)
       : webFetch('/api/mail/sync', { method: 'POST', body: JSON.stringify({ accountId, folder: folder || 'INBOX' }) }),
-    send: (data: unknown) => isElectron
+    send: (data: ComposeData) => isElectron
       ? getAPI().mail.send(data)
       : webFetch('/api/mail/send', { method: 'POST', body: JSON.stringify(data) }),
     markRead: (emailId: string, isRead: boolean) => isElectron
@@ -99,7 +108,7 @@ export const api = {
       : Promise.resolve(null),
   },
   ai: {
-    generateReply: (emailId: string, tone: string) => isElectron
+    generateReply: (emailId: string, tone: AiTone) => isElectron
       ? getAPI().ai.generateReply(emailId, tone)
       : Promise.reject(new Error('Web版ではAI機能は未対応')),
     summarize: (emailId: string) => isElectron
@@ -114,7 +123,7 @@ export const api = {
     detectCalendarEvent: (emailId: string) => isElectron
       ? getAPI().ai.detectCalendarEvent(emailId)
       : Promise.reject(new Error('Web版ではAI機能は未対応')),
-    openCalendarEvent: (event: unknown) => isElectron
+    openCalendarEvent: (event: CalendarEvent) => isElectron
       ? getAPI().ai.openCalendarEvent(event)
       : Promise.resolve(null),
     setApiKey: (key: string) => isElectron
@@ -145,7 +154,7 @@ export const api = {
     set: (key: string, value: string) => isElectron
       ? getAPI().settings.set(key, value)
       : webFetch('/api/settings', { method: 'POST', body: JSON.stringify({ [key]: value }) }),
-    setAll: (settings: unknown) => isElectron
+    setAll: (settings: Partial<Settings>) => isElectron
       ? getAPI().settings.setAll(settings)
       : webFetch('/api/settings', { method: 'POST', body: JSON.stringify(settings) }),
   },
@@ -153,10 +162,10 @@ export const api = {
     list: (accountId: string) => isElectron
       ? getAPI().filters.list(accountId)
       : Promise.resolve([]),
-    create: (accountId: string, data: unknown) => isElectron
+    create: (accountId: string, data: Omit<FilterRule, 'id' | 'accountId' | 'createdAt'>) => isElectron
       ? getAPI().filters.create(accountId, data)
       : Promise.resolve(null),
-    update: (id: string, data: unknown) => isElectron
+    update: (id: string, data: Partial<Omit<FilterRule, 'id' | 'accountId' | 'createdAt'>>) => isElectron
       ? getAPI().filters.update(id, data)
       : Promise.resolve(null),
     delete: (id: string) => isElectron
@@ -178,10 +187,10 @@ export const api = {
     getDefault: (accountId: string) => isElectron
       ? getAPI().signatures.getDefault(accountId)
       : Promise.resolve(null),
-    create: (data: unknown) => isElectron
+    create: (data: Omit<Signature, 'id' | 'createdAt'>) => isElectron
       ? getAPI().signatures.create(data)
       : Promise.resolve(null),
-    update: (id: string, data: unknown) => isElectron
+    update: (id: string, data: Partial<Omit<Signature, 'id' | 'createdAt'>>) => isElectron
       ? getAPI().signatures.update(id, data)
       : Promise.resolve(null),
     delete: (id: string) => isElectron

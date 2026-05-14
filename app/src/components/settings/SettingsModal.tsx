@@ -227,7 +227,7 @@ function SignaturesTab() {
   async function handleCreate() {
     if (!form.name.trim() || !form.content.trim()) return;
     const updated = await api.signatures.create({ ...form, isDefault: form.isDefault });
-    setSignatures(updated);
+    if (updated) setSignatures(updated);
     setShowForm(false);
     setForm({ name: '', content: '', accountId: null, isDefault: false });
   }
@@ -235,14 +235,14 @@ function SignaturesTab() {
   async function handleUpdate() {
     if (!editingId || !form.name.trim() || !form.content.trim()) return;
     const updated = await api.signatures.update(editingId, { ...form });
-    setSignatures(updated);
+    if (updated) setSignatures(updated);
     setEditingId(null);
   }
 
   async function handleDelete(id: string) {
     if (!confirm('この署名を削除しますか？')) return;
     const updated = await api.signatures.delete(id);
-    setSignatures(updated);
+    if (updated) setSignatures(updated);
   }
 
   function startEdit(sig: Signature) {
@@ -458,7 +458,7 @@ function BlocklistTab() {
     setLoading(true);
     try {
       const result = await api.blocklist.add(selectedAccountId, pattern.trim(), type);
-      setBlocklist(result);
+      if (result) setBlocklist(result);
       setPattern('');
     } finally {
       setLoading(false);
@@ -468,7 +468,7 @@ function BlocklistTab() {
   async function handleRemove(id: string) {
     if (!selectedAccountId) return;
     const result = await api.blocklist.remove(id, selectedAccountId);
-    setBlocklist(result);
+    if (result) setBlocklist(result);
   }
 
   return (

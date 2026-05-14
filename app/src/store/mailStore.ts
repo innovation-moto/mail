@@ -84,7 +84,7 @@ export const useMailStore = create<MailState>((set, get) => ({
     set({ loading: true, error: null });
     try {
       const emails = await api.mail.fetchEmails(accountId, f, 50, 0);
-      const unreadCount = f === 'INBOX' ? emails.filter((e) => !e.isRead).length : get().inboxUnreadCount;
+      const unreadCount = f === 'INBOX' ? emails.filter((e: { isRead: boolean }) => !e.isRead).length : get().inboxUnreadCount;
       set({ emails, loading: false, selectedFolder: f, inboxUnreadCount: unreadCount });
     } catch (err) {
       set({ loading: false, error: (err as Error).message });
