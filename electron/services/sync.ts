@@ -102,6 +102,17 @@ export async function syncAllAccounts(win?: BrowserWindow): Promise<void> {
             const result = await syncFolder(account, password, folder, 50);
             await syncFlags(account, password, folder).catch(() => 0);
             totalAdded += result.added;
+
+            // フォルダごとに同期完了したら即座にrendererへ通知（全フォルダ完了を待たない）
+            if (result.added > 0) {
+              const unreadCounts = getAllFolderUnreadCounts(account.id);
+              updateBadge();
+              win?.webContents.send('mail:synced', {
+                accountId: account.id,
+                added: result.added,
+                unreadCounts,
+              });
+            }
           } catch (folderErr) {
             console.error(`[sync] folder=${folder} failed:`, (folderErr as Error).message);
           }
@@ -118,10 +129,8 @@ export async function syncAllAccounts(win?: BrowserWindow): Promise<void> {
           );
         }
 
-        // Dockバッジ更新
+        // 全フォルダ完了後に最終の未読数・バッジを更新
         updateBadge();
-
-        // 未読数をイベントに埋め込んで送信（renderer側でIPC呼び出し不要）
         const unreadCounts = getAllFolderUnreadCounts(account.id);
         win?.webContents.send('mail:synced', {
           accountId: account.id,
@@ -140,7 +149,7 @@ export async function syncAllAccounts(win?: BrowserWindow): Promise<void> {
 
 export function startSync(win: BrowserWindow): void {
   const settings = getAllSettings();
-  const intervalMs = (settings.syncIntervalSec ?? 30) * 1000;
+  const intervalMs = (settings.syncIntervalSec ?? 15) * 1000;
 
   syncTimer = setInterval(() => {
     syncAllAccounts(win).catch(console.error);
