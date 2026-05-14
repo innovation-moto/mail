@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
 import {
-  Inbox, Send, FileText, Trash2, Star, Folder, ChevronDown,
+  Inbox, Send, FileText, Trash2, Star, Pin, Folder, ChevronDown,
   Plus, Settings, RefreshCw, PanelLeftClose, PanelLeft, GripVertical,
 } from 'lucide-react';
 import { useAccountStore } from '@/store/accountStore';
@@ -14,6 +14,7 @@ const SPECIAL_FOLDERS = [
   { path: 'Sent',    name: '送信済み',    icon: Send,     color: 'text-green-500' },
   { path: 'Drafts',  name: '下書き',      icon: FileText, color: 'text-yellow-500' },
   { path: 'Starred', name: 'スター付き',  icon: Star,     color: 'text-orange-400' },
+  { path: 'Pinned',  name: 'ピン留め',    icon: Pin,      color: 'text-blue-400' },
   { path: 'Trash',   name: 'ゴミ箱',      icon: Trash2,   color: 'text-red-400' },
 ];
 
@@ -34,25 +35,54 @@ function saveFolderOrder(order: string[]) {
 
 export function Sidebar() {
   const { accounts, selectedAccountId, selectAccount } = useAccountStore();
-  const { selectedFolder, folders, selectFolder, syncEmails, syncing, loadEmails, folderUnreadCounts } = useMailStore();
+  const { selectedFolder, folders, selectFolder, syncEmails, syncing, loadEmails, folderUnreadCounts, moveEmail } = useMailStore();
   const { openCompose, openSettings, sidebarCollapsed, toggleSidebar } = useUIStore();
 
   const account = accounts.find((a) => a.id === selectedAccountId);
+
+  // SPECIALフォルダと重複するGmailフォルダを除外するパターン
+  const DUPLICATE_PATTERNS = [
+    /ゴミ箱/i, /trash/i, /deleted/i,
+    /スター/i, /starred/i,
+    /送信済み/i, /sent/i,
+    /下書き/i, /draft/i,
+    /迷惑/i, /spam/i, /junk/i,
+    /重要/i, /important/i,
+    /すべてのメール/i, /all\s*mail/i,
+    /^\[gmail\]$/i,
+  ];
+
+  function isDuplicateFolder(path: string, name: string): boolean {
+    // SPECIALフォルダのpathと完全一致は除外済みなので、名前・パスパターンで重複を検出
+    return DUPLICATE_PATTERNS.some((re) => re.test(path) || re.test(name));
+  }
 
   // 全フォルダ（SPECIAL + カスタム）を結合して順番管理
   const allFolders = [
     ...SPECIAL_FOLDERS.map((f) => ({ ...f, isSpecial: true, iconComponent: f.icon, color: f.color })),
     ...folders
       .filter((f) => !SPECIAL_FOLDERS.some((sf) => sf.path === f.path))
+      .filter((f) => !isDuplicateFolder(f.path, f.name))
       .map((f) => ({ path: f.path, name: f.name, icon: Folder, iconComponent: Folder, isSpecial: false, color: 'text-indigo-400' })),
   ];
 
   const [orderedPaths, setOrderedPaths] = useState<string[]>([]);
+  const [accountListOpen, setAccountListOpen] = useState(false);
 
   useEffect(() => {
     const saved = loadFolderOrder();
     if (saved.length > 0) {
-      setOrderedPaths(saved);
+      // 保存済み順に新しいSPECIALフォルダが欠けている場合、正しい位置に挿入する
+      const specialPaths = SPECIAL_FOLDERS.map((f) => f.path);
+      let order = [...saved];
+      for (let i = 0; i < specialPaths.length; i++) {
+        if (!order.includes(specialPaths[i])) {
+          const prevSpecial = i > 0 ? specialPaths[i - 1] : null;
+          const insertAfter = prevSpecial ? order.indexOf(prevSpecial) : -1;
+          order.splice(insertAfter + 1, 0, specialPaths[i]);
+        }
+      }
+      setOrderedPaths(order);
     } else {
       setOrderedPaths(allFolders.map((f) => f.path));
     }
@@ -66,9 +96,15 @@ export function Sidebar() {
     ...allFolders.filter((f) => !orderedPaths.includes(f.path)),
   ] as typeof allFolders;
 
-  // ドラッグ状態
+  // ドラッグ状態（フォルダ並び替え用）
   const dragIndex = useRef<number | null>(null);
   const [dragOver, setDragOver] = useState<number | null>(null);
+  // メールドロップ用ハイライト
+  const [emailDropTarget, setEmailDropTarget] = useState<number | null>(null);
+
+  function isEmailDrag(e: React.DragEvent) {
+    return e.dataTransfer.types.includes('application/email-id');
+  }
 
   function handleDragStart(index: number) {
     dragIndex.current = index;
@@ -76,10 +112,33 @@ export function Sidebar() {
 
   function handleDragOver(e: React.DragEvent, index: number) {
     e.preventDefault();
-    setDragOver(index);
+    if (isEmailDrag(e)) {
+      e.dataTransfer.dropEffect = 'move';
+      setEmailDropTarget(index);
+    } else {
+      setDragOver(index);
+    }
   }
 
-  function handleDrop(index: number) {
+  function handleDragLeave(e: React.DragEvent) {
+    if (isEmailDrag(e)) {
+      setEmailDropTarget(null);
+    }
+  }
+
+  async function handleDrop(e: React.DragEvent, index: number) {
+    e.preventDefault();
+    const emailId = e.dataTransfer.getData('application/email-id');
+    if (emailId) {
+      // メールをフォルダに移動
+      const targetFolder = sortedFolders[index]?.path;
+      if (targetFolder) {
+        await moveEmail(emailId, targetFolder);
+      }
+      setEmailDropTarget(null);
+      return;
+    }
+    // フォルダ並び替え
     if (dragIndex.current === null || dragIndex.current === index) {
       setDragOver(null);
       return;
@@ -96,6 +155,7 @@ export function Sidebar() {
   function handleDragEnd() {
     dragIndex.current = null;
     setDragOver(null);
+    setEmailDropTarget(null);
   }
 
   async function handleFolderClick(path: string) {
@@ -118,7 +178,10 @@ export function Sidebar() {
       )}
     >
       {/* macOS titlebar drag area */}
-      <div className="drag h-8 flex items-center justify-end px-2 flex-shrink-0">
+      <div className={cn(
+        'drag flex items-center justify-end px-2 flex-shrink-0',
+        sidebarCollapsed ? 'h-16 items-end pb-1' : 'h-8',
+      )}>
         <button
           onClick={toggleSidebar}
           className="no-drag p-1 rounded hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-500"
@@ -127,27 +190,57 @@ export function Sidebar() {
         </button>
       </div>
 
+      {/* ロゴ */}
+      {!sidebarCollapsed && (
+        <div className="px-5 py-3 flex-shrink-0">
+          <img
+            src="/logo.png"
+            alt="INNOVATION MUSIC"
+            className="w-full max-w-[160px] h-auto object-contain dark:hidden"
+          />
+          <img
+            src="/logo_white.png"
+            alt="INNOVATION MUSIC"
+            className="w-full max-w-[160px] h-auto object-contain hidden dark:block"
+          />
+        </div>
+      )}
+
       {/* Account switcher */}
       {!sidebarCollapsed && (
         <div className="px-3 pb-2">
-          <div className="flex items-center gap-2 p-2 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-800 cursor-pointer">
+          <div
+            className="flex items-center gap-2 p-2 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-800 cursor-pointer"
+            onClick={() => accounts.length > 1 && setAccountListOpen((o) => !o)}
+          >
             {account ? (
               <>
-                <div className={cn('w-7 h-7 rounded-full flex items-center justify-center text-white text-xs font-bold flex-shrink-0', getAvatarColor(account.email))}>
-                  {getInitials(account.name, account.email)}
+                <div className={cn('w-7 h-7 rounded-full flex-shrink-0 overflow-hidden', !account.avatar && getAvatarColor(account.email))}>
+                  {account.avatar ? (
+                    <img src={account.avatar} alt={account.name} className="w-full h-full object-cover" />
+                  ) : (
+                    <span className="w-full h-full flex items-center justify-center text-white text-xs font-bold">
+                      {getInitials(account.name, account.email)}
+                    </span>
+                  )}
                 </div>
                 <div className="min-w-0 flex-1">
                   <div className="text-sm font-medium truncate dark:text-white">{account.name}</div>
                   <div className="text-xs text-gray-500 truncate">{account.email}</div>
                 </div>
-                <ChevronDown size={14} className="text-gray-400 flex-shrink-0" />
+                {accounts.length > 1 && (
+                  <ChevronDown
+                    size={14}
+                    className={cn('text-gray-400 flex-shrink-0 transition-transform', accountListOpen && 'rotate-180')}
+                  />
+                )}
               </>
             ) : (
               <div className="text-sm text-gray-500">アカウントなし</div>
             )}
           </div>
 
-          {accounts.length > 1 && (
+          {accounts.length > 1 && accountListOpen && (
             <div className="mt-1 space-y-0.5">
               {accounts.map((a) => (
                 <button
@@ -160,8 +253,14 @@ export function Sidebar() {
                       : 'hover:bg-gray-200 dark:hover:bg-gray-800 text-gray-700 dark:text-gray-300',
                   )}
                 >
-                  <div className={cn('w-5 h-5 rounded-full flex items-center justify-center text-white text-xs font-bold flex-shrink-0', getAvatarColor(a.email))}>
-                    {getInitials(a.name, a.email)[0]}
+                  <div className={cn('w-5 h-5 rounded-full flex-shrink-0 overflow-hidden', !a.avatar && getAvatarColor(a.email))}>
+                    {a.avatar ? (
+                      <img src={a.avatar} alt={a.name} className="w-full h-full object-cover" />
+                    ) : (
+                      <span className="w-full h-full flex items-center justify-center text-white text-xs font-bold">
+                        {getInitials(a.name, a.email)[0]}
+                      </span>
+                    )}
                   </div>
                   <span className="truncate">{a.email}</span>
                 </button>
@@ -191,6 +290,7 @@ export function Sidebar() {
           const IconComponent = folder.iconComponent;
           const unread = folderUnreadCounts[folder.path] ?? 0;
           const isDraggingOver = dragOver === index;
+          const isEmailOver = emailDropTarget === index;
 
           return (
             <div
@@ -198,11 +298,13 @@ export function Sidebar() {
               draggable={!sidebarCollapsed}
               onDragStart={() => handleDragStart(index)}
               onDragOver={(e) => handleDragOver(e, index)}
-              onDrop={() => handleDrop(index)}
+              onDragLeave={handleDragLeave}
+              onDrop={(e) => handleDrop(e, index)}
               onDragEnd={handleDragEnd}
               className={cn(
                 'rounded-lg transition-all',
                 isDraggingOver && 'ring-2 ring-blue-400 ring-offset-1 bg-blue-50 dark:bg-blue-900/20',
+                isEmailOver && 'ring-2 ring-green-400 ring-offset-1 bg-green-50 dark:bg-green-900/20 scale-[1.02]',
               )}
             >
               <FolderItem

@@ -2,7 +2,7 @@ import { BrowserWindow } from 'electron';
 import { safeStorage } from 'electron';
 import { listAccounts } from '../db/queries/accounts';
 import { getEncryptedPassword } from '../db/queries/accounts';
-import { getUnreadCount } from '../db/queries/emails';
+import { getUnreadCount, listEmails } from '../db/queries/emails';
 import { syncFolder, syncFlags } from './imap';
 import { getAllSettings } from '../db/queries/settings';
 import { showNewMailNotification } from './notification';
@@ -29,6 +29,25 @@ export async function syncAllAccounts(win?: BrowserWindow): Promise<void> {
         continue;
       }
 
+      // OAuthアカウントはトークンリフレッシュ
+      const a = account as any;
+      if (a.oauthRefreshToken && (!a.oauthExpiresAt || a.oauthExpiresAt < Date.now() + 60000)) {
+        try {
+          const { refreshMicrosoftToken } = await import('./microsoftAuth');
+          const { updateAccount } = await import('../db/queries/accounts');
+          const tokens = await refreshMicrosoftToken(a.oauthRefreshToken);
+          updateAccount(account.id, {
+            oauthAccessToken: tokens.accessToken,
+            oauthRefreshToken: tokens.refreshToken,
+            oauthExpiresAt: tokens.expiresAt,
+          } as any);
+          a.oauthAccessToken = tokens.accessToken;
+          a.oauthExpiresAt = tokens.expiresAt;
+        } catch (e) {
+          console.error('[sync] token refresh failed:', e);
+        }
+      }
+
       try {
         const beforeCount = getUnreadCount(account.id, 'INBOX');
         const result = await syncFolder(account, password, 'INBOX', 50);
@@ -39,7 +58,11 @@ export async function syncAllAccounts(win?: BrowserWindow): Promise<void> {
         const afterCount = getUnreadCount(account.id, 'INBOX');
         const newCount = afterCount - beforeCount;
         if (newCount > 0 && settings.notificationsEnabled) {
-          showNewMailNotification(account.email, newCount);
+          const latest = listEmails(account.id, 'INBOX', 1, 0)[0];
+          showNewMailNotification(account.email, newCount, latest
+            ? { from: latest.from.name || latest.from.address, subject: latest.subject, bodyText: latest.bodyText }
+            : undefined,
+          );
         }
 
         // Always notify renderer to refresh

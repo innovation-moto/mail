@@ -1,18 +1,18 @@
 'use client';
 import { useState, useEffect } from 'react';
 import {
-  X, User, Shield, Sparkles, Bell, Trash2, Plus,
+  X, User, Shield, Sparkles, Bell, Trash2, Plus, Pencil, Check,
   CheckCircle, Loader2, Moon, Sun, Monitor,
-  Filter, FolderPlus, FolderOpen, ChevronDown, ChevronUp,
+  Filter, FolderPlus, FolderOpen, ChevronDown, ChevronUp, Camera, PenLine, Star,
 } from 'lucide-react';
 import { useAccountStore } from '@/store/accountStore';
 import { useMailStore } from '@/store/mailStore';
 import { useUIStore } from '@/store/uiStore';
 import { api } from '@/lib/ipc';
-import { BlockEntry, Settings, FilterRule, FilterCondition } from '@/types/shared';
+import { BlockEntry, Settings, FilterRule, FilterCondition, Signature } from '@/types/shared';
 import { cn } from '@/lib/utils';
 
-type Tab = 'accounts' | 'ai' | 'blocklist' | 'filters' | 'folders' | 'notifications' | 'appearance';
+type Tab = 'accounts' | 'signatures' | 'ai' | 'blocklist' | 'filters' | 'folders' | 'notifications' | 'appearance';
 
 export function SettingsModal() {
   const { closeModal } = useUIStore();
@@ -20,6 +20,7 @@ export function SettingsModal() {
 
   const tabs: { id: Tab; label: string; icon: React.ReactNode }[] = [
     { id: 'accounts', label: 'アカウント', icon: <User size={15} /> },
+    { id: 'signatures', label: '署名', icon: <PenLine size={15} /> },
     { id: 'filters', label: 'フィルター', icon: <Filter size={15} /> },
     { id: 'folders', label: 'フォルダ管理', icon: <FolderOpen size={15} /> },
     { id: 'ai', label: 'AI設定', icon: <Sparkles size={15} /> },
@@ -61,6 +62,7 @@ export function SettingsModal() {
         {/* Content */}
         <div className="flex-1 overflow-y-auto scrollbar-thin">
           {tab === 'accounts' && <AccountsTab />}
+          {tab === 'signatures' && <SignaturesTab />}
           {tab === 'filters' && <FiltersTab />}
           {tab === 'folders' && <FoldersTab />}
           {tab === 'ai' && <AiTab />}
@@ -74,8 +76,45 @@ export function SettingsModal() {
 }
 
 function AccountsTab() {
-  const { accounts, deleteAccount } = useAccountStore();
+  const { accounts, deleteAccount, updateAccount } = useAccountStore();
   const { openAccountSetup } = useUIStore();
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingName, setEditingName] = useState('');
+
+  function startEdit(id: string, currentName: string) {
+    setEditingId(id);
+    setEditingName(currentName);
+  }
+
+  async function saveEdit(id: string) {
+    if (!editingName.trim()) return;
+    await updateAccount(id, { name: editingName.trim() });
+    setEditingId(null);
+  }
+
+  async function handleAvatarChange(id: string, file: File) {
+    if (!file.type.startsWith('image/')) return;
+    const reader = new FileReader();
+    reader.onload = async (e) => {
+      const dataUrl = e.target?.result as string;
+      // リサイズ: 最大128x128
+      const img = new Image();
+      img.onload = async () => {
+        const canvas = document.createElement('canvas');
+        const size = Math.min(img.width, img.height);
+        canvas.width = 128;
+        canvas.height = 128;
+        const ctx = canvas.getContext('2d')!;
+        const sx = (img.width - size) / 2;
+        const sy = (img.height - size) / 2;
+        ctx.drawImage(img, sx, sy, size, size, 0, 0, 128, 128);
+        const resized = canvas.toDataURL('image/jpeg', 0.85);
+        await updateAccount(id, { avatar: resized } as never);
+      };
+      img.src = dataUrl;
+    };
+    reader.readAsDataURL(file);
+  }
 
   return (
     <div className="p-6">
@@ -91,22 +130,235 @@ function AccountsTab() {
       </div>
       <div className="space-y-2">
         {accounts.map((a) => (
-          <div key={a.id} className="flex items-center justify-between p-3 rounded-lg border border-gray-200 dark:border-gray-700">
-            <div>
-              <div className="text-sm font-medium text-gray-900 dark:text-white">{a.name}</div>
-              <div className="text-xs text-gray-500">{a.email}</div>
-              <div className="text-xs text-gray-400">{a.provider} · IMAP: {a.imapHost}:{a.imapPort}</div>
+          <div key={a.id} className="p-3 rounded-lg border border-gray-200 dark:border-gray-700">
+            <div className="flex items-center gap-3">
+              {/* アバター */}
+              <label className="relative flex-shrink-0 cursor-pointer group">
+                <div className="w-10 h-10 rounded-full overflow-hidden bg-gray-200 dark:bg-gray-700 flex items-center justify-center">
+                  {a.avatar ? (
+                    <img src={a.avatar} alt={a.name} className="w-full h-full object-cover" />
+                  ) : (
+                    <span className="text-sm font-bold text-gray-500 dark:text-gray-400">
+                      {a.name?.[0]?.toUpperCase() ?? a.email[0].toUpperCase()}
+                    </span>
+                  )}
+                </div>
+                <div className="absolute inset-0 rounded-full bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                  <Camera size={14} className="text-white" />
+                </div>
+                <input
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={(e) => e.target.files?.[0] && handleAvatarChange(a.id, e.target.files[0])}
+                />
+              </label>
+
+              <div className="flex-1 min-w-0">
+                {editingId === a.id ? (
+                  <div className="flex items-center gap-2 mb-1">
+                    <input
+                      autoFocus
+                      value={editingName}
+                      onChange={(e) => setEditingName(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === 'Enter') saveEdit(a.id); if (e.key === 'Escape') setEditingId(null); }}
+                      className="flex-1 text-sm px-2 py-1 rounded border border-blue-400 bg-white dark:bg-gray-800 text-gray-900 dark:text-white outline-none"
+                      placeholder="表示名"
+                    />
+                    <button
+                      onClick={() => saveEdit(a.id)}
+                      className="p-1.5 rounded bg-blue-600 hover:bg-blue-700 text-white"
+                    >
+                      <Check size={13} />
+                    </button>
+                    <button
+                      onClick={() => setEditingId(null)}
+                      className="p-1.5 rounded hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-400"
+                    >
+                      <X size={13} />
+                    </button>
+                  </div>
+                ) : (
+                  <div className="text-sm font-medium text-gray-900 dark:text-white">{a.name}</div>
+                )}
+                <div className="text-xs text-gray-500">{a.email}</div>
+                <div className="text-xs text-gray-400">{a.provider} · IMAP: {a.imapHost}:{a.imapPort}</div>
+              </div>
+              {editingId !== a.id && (
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={() => startEdit(a.id, a.name)}
+                    className="p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-400"
+                    title="表示名を編集"
+                  >
+                    <Pencil size={14} />
+                  </button>
+                  <button
+                    onClick={() => confirm(`${a.email} を削除しますか？`) && deleteAccount(a.id)}
+                    className="p-2 rounded hover:bg-red-50 dark:hover:bg-red-900/20 text-red-500"
+                    title="削除"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+              )}
             </div>
-            <button
-              onClick={() => confirm(`${a.email} を削除しますか？`) && deleteAccount(a.id)}
-              className="p-2 rounded hover:bg-red-50 dark:hover:bg-red-900/20 text-red-500"
-            >
-              <Trash2 size={14} />
-            </button>
           </div>
         ))}
         {accounts.length === 0 && (
           <p className="text-sm text-gray-400 text-center py-8">アカウントがありません</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function SignaturesTab() {
+  const { accounts } = useAccountStore();
+  const [signatures, setSignatures] = useState<Signature[]>([]);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [form, setForm] = useState({ name: '', content: '', accountId: null as string | null, isDefault: false });
+  const [showForm, setShowForm] = useState(false);
+
+  useEffect(() => {
+    api.signatures.list().then(setSignatures);
+  }, []);
+
+  async function handleCreate() {
+    if (!form.name.trim() || !form.content.trim()) return;
+    const updated = await api.signatures.create({ ...form, isDefault: form.isDefault });
+    setSignatures(updated);
+    setShowForm(false);
+    setForm({ name: '', content: '', accountId: null, isDefault: false });
+  }
+
+  async function handleUpdate() {
+    if (!editingId || !form.name.trim() || !form.content.trim()) return;
+    const updated = await api.signatures.update(editingId, { ...form });
+    setSignatures(updated);
+    setEditingId(null);
+  }
+
+  async function handleDelete(id: string) {
+    if (!confirm('この署名を削除しますか？')) return;
+    const updated = await api.signatures.delete(id);
+    setSignatures(updated);
+  }
+
+  function startEdit(sig: Signature) {
+    setEditingId(sig.id);
+    setForm({ name: sig.name, content: sig.content, accountId: sig.accountId, isDefault: sig.isDefault });
+    setShowForm(false);
+  }
+
+  const signatureFormJsx = (onSave: () => void, onCancel: () => void) => (
+    <div className="space-y-3 p-3 rounded-lg border border-blue-200 dark:border-blue-800 bg-blue-50/50 dark:bg-blue-900/10">
+      <div>
+        <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">署名名</label>
+        <input
+          value={form.name}
+          onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+          placeholder="例：会社署名"
+          className="w-full px-3 py-1.5 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white outline-none focus:border-blue-500"
+        />
+      </div>
+      <div>
+        <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">アカウント</label>
+        <select
+          value={form.accountId ?? ''}
+          onChange={(e) => setForm((f) => ({ ...f, accountId: e.target.value || null }))}
+          className="w-full px-3 py-1.5 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white outline-none"
+        >
+          <option value="">すべてのアカウント</option>
+          {accounts.map((a) => <option key={a.id} value={a.id}>{a.email}</option>)}
+        </select>
+      </div>
+      <div>
+        <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">署名内容</label>
+        <textarea
+          value={form.content}
+          onChange={(e) => setForm((f) => ({ ...f, content: e.target.value }))}
+          placeholder={'--\n佐渡 元樹\n株式会社INNOVATION MUSIC\ntel: 000-0000-0000'}
+          rows={6}
+          className="w-full px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white outline-none focus:border-blue-500 resize-none font-mono"
+        />
+      </div>
+      <label className="flex items-center gap-2 cursor-pointer">
+        <input
+          type="checkbox"
+          checked={form.isDefault}
+          onChange={(e) => setForm((f) => ({ ...f, isDefault: e.target.checked }))}
+          className="rounded"
+        />
+        <span className="text-xs text-gray-600 dark:text-gray-400">デフォルト署名に設定</span>
+      </label>
+      <div className="flex gap-2 justify-end">
+        <button onClick={onCancel} className="px-3 py-1.5 text-xs rounded-lg border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700">
+          キャンセル
+        </button>
+        <button onClick={onSave} className="px-3 py-1.5 text-xs rounded-lg bg-blue-600 hover:bg-blue-700 text-white">
+          保存
+        </button>
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="p-6">
+      <div className="flex items-center justify-between mb-4">
+        <h3 className="text-base font-semibold text-gray-900 dark:text-white">署名管理</h3>
+        {!showForm && !editingId && (
+          <button
+            onClick={() => { setShowForm(true); setForm({ name: '', content: '', accountId: null, isDefault: false }); }}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg bg-blue-600 hover:bg-blue-700 text-white"
+          >
+            <Plus size={13} />
+            追加
+          </button>
+        )}
+      </div>
+
+      <div className="space-y-3">
+        {showForm && signatureFormJsx(handleCreate, () => setShowForm(false))}
+
+        {signatures.map((sig) => (
+          <div key={sig.id}>
+            {editingId === sig.id ? (
+              signatureFormJsx(handleUpdate, () => setEditingId(null))
+            ) : (
+              <div className="p-3 rounded-lg border border-gray-200 dark:border-gray-700">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="text-sm font-medium text-gray-900 dark:text-white">{sig.name}</span>
+                      {sig.isDefault && (
+                        <span className="flex items-center gap-1 px-1.5 py-0.5 text-[10px] rounded bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-400">
+                          <Star size={9} />
+                          デフォルト
+                        </span>
+                      )}
+                      {sig.accountId && (
+                        <span className="text-[10px] text-gray-400">{accounts.find((a) => a.id === sig.accountId)?.email}</span>
+                      )}
+                    </div>
+                    <pre className="text-xs text-gray-500 dark:text-gray-400 whitespace-pre-wrap font-mono line-clamp-3">{sig.content}</pre>
+                  </div>
+                  <div className="flex items-center gap-1 flex-shrink-0">
+                    <button onClick={() => startEdit(sig)} className="p-1.5 rounded hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-400">
+                      <Pencil size={13} />
+                    </button>
+                    <button onClick={() => handleDelete(sig.id)} className="p-1.5 rounded hover:bg-red-50 dark:hover:bg-red-900/20 text-red-400">
+                      <Trash2 size={13} />
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        ))}
+
+        {signatures.length === 0 && !showForm && (
+          <p className="text-sm text-gray-400 text-center py-8">署名がありません</p>
         )}
       </div>
     </div>
@@ -408,7 +660,19 @@ function FiltersTab() {
     }
   }
 
-  const allFolders = folders.map((f) => f.path);
+  const DUPLICATE_PATTERNS = [
+    /ゴミ箱/i, /trash/i, /deleted/i,
+    /スター/i, /starred/i,
+    /送信済み/i, /sent/i,
+    /下書き/i, /draft/i,
+    /迷惑/i, /spam/i, /junk/i,
+    /重要/i, /important/i,
+    /すべてのメール/i, /all\s*mail/i,
+    /^\[gmail\]$/i,
+  ];
+  const allFolders = folders
+    .filter((f) => !DUPLICATE_PATTERNS.some((re) => re.test(f.path) || re.test(f.name)))
+    .map((f) => f.path);
 
   if (creating || editing) {
     return (

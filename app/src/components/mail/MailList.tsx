@@ -1,6 +1,6 @@
 'use client';
 import { useState } from 'react';
-import { Search, Sparkles, X, RefreshCw, Paperclip, ShieldBan } from 'lucide-react';
+import { Search, Sparkles, X, RefreshCw, Paperclip, ShieldBan, Trash2, CheckCheck, Pin, PinOff } from 'lucide-react';
 import { useAccountStore } from '@/store/accountStore';
 import { useMailStore } from '@/store/mailStore';
 import { Email } from '@/types/shared';
@@ -11,7 +11,7 @@ export function MailList() {
   const { selectedAccountId } = useAccountStore();
   const {
     emails, selectedEmailId, selectedFolder, loading, syncing,
-    selectEmail, markRead, searchResults, searchQuery, isSmartSearch,
+    selectEmail, markRead, markAllRead, searchResults, searchQuery, isSmartSearch,
     smartSearchAnswer, clearSearch, search, smartSearch, syncEmails,
   } = useMailStore();
   const [query, setQuery] = useState('');
@@ -44,6 +44,7 @@ export function MailList() {
     : selectedFolder === 'Drafts' ? '下書き'
     : selectedFolder === 'Trash' ? 'ゴミ箱'
     : selectedFolder === 'Starred' ? 'スター付き'
+    : selectedFolder === 'Pinned' ? 'ピン留め'
     : selectedFolder;
 
   return (
@@ -52,14 +53,25 @@ export function MailList() {
       <div className="px-4 pt-8 pb-3 flex-shrink-0">
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-lg font-semibold text-gray-900 dark:text-white">{title}</h2>
-          <button
-            onClick={() => selectedAccountId && syncEmails(selectedAccountId)}
-            disabled={syncing || loading}
-            className="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 disabled:opacity-40 transition-colors"
-            title="メールを更新"
-          >
-            <RefreshCw size={15} className={cn(syncing && 'animate-spin')} />
-          </button>
+          <div className="flex items-center gap-0.5">
+            {searchResults === null && emails.some((e) => !e.isRead) && (
+              <button
+                onClick={() => selectedAccountId && markAllRead(selectedAccountId, selectedFolder)}
+                className="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-400 hover:text-blue-500 dark:hover:text-blue-400 transition-colors"
+                title="すべて既読にする"
+              >
+                <CheckCheck size={15} />
+              </button>
+            )}
+            <button
+              onClick={() => selectedAccountId && syncEmails(selectedAccountId)}
+              disabled={syncing || loading}
+              className="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 disabled:opacity-40 transition-colors"
+              title="メールを更新"
+            >
+              <RefreshCw size={15} className={cn(syncing && 'animate-spin')} />
+            </button>
+          </div>
         </div>
 
         {/* Search bar */}
@@ -136,7 +148,13 @@ function EmailItem({
   onClick: () => void;
 }) {
   const { selectedAccountId } = useAccountStore();
+  const { deleteEmail, pinEmail } = useMailStore();
   const [hovered, setHovered] = useState(false);
+
+  async function handleQuickDelete(e: React.MouseEvent) {
+    e.stopPropagation();
+    await deleteEmail(email.id);
+  }
 
   async function handleQuickBlock(e: React.MouseEvent) {
     e.stopPropagation();
@@ -145,9 +163,26 @@ function EmailItem({
     await api.blocklist.add(selectedAccountId, email.from.address, 'address');
   }
 
+  async function handleQuickPin(e: React.MouseEvent) {
+    e.stopPropagation();
+    await pinEmail(email.id, !email.isPinned);
+  }
+
   return (
     <div
       className="relative group"
+      draggable
+      onDragStart={(e) => {
+        e.dataTransfer.setData('application/email-id', email.id);
+        e.dataTransfer.effectAllowed = 'move';
+        // ドラッグ画像をコンパクトなラベルにしてカーソル上部に表示
+        const ghost = document.createElement('div');
+        ghost.style.cssText = 'position:fixed;top:-1000px;left:-1000px;background:#3b82f6;color:white;padding:4px 12px;border-radius:20px;font-size:12px;white-space:nowrap;max-width:200px;overflow:hidden;text-overflow:ellipsis;box-shadow:0 2px 8px rgba(0,0,0,0.2);';
+        ghost.textContent = email.subject || email.from.name || 'メール';
+        document.body.appendChild(ghost);
+        e.dataTransfer.setDragImage(ghost, ghost.offsetWidth / 2, 30);
+        setTimeout(() => document.body.removeChild(ghost), 100);
+      }}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
     >
@@ -193,6 +228,9 @@ function EmailItem({
             {!email.isRead && (
               <span className="w-2 h-2 rounded-full bg-blue-500 flex-shrink-0" />
             )}
+            {email.isPinned && (
+              <Pin size={11} className="text-blue-400 flex-shrink-0" />
+            )}
             {email.isStarred && (
               <span className="text-yellow-400 flex-shrink-0 text-xs">★</span>
             )}
@@ -204,15 +242,36 @@ function EmailItem({
       </div>
     </button>
 
-    {/* クイックブロックボタン（ホバー時に表示） */}
+    {/* クイックアクションボタン（ホバー時に表示） */}
     {hovered && (
-      <button
-        onClick={handleQuickBlock}
-        title="このアドレスをブロック"
-        className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 rounded-lg bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 text-gray-400 hover:text-red-500 hover:border-red-300 shadow-sm transition-colors"
-      >
-        <ShieldBan size={13} />
-      </button>
+      <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
+        <button
+          onClick={handleQuickPin}
+          title={email.isPinned ? 'ピン留めを外す' : 'ピン留め'}
+          className={cn(
+            'p-1.5 rounded-lg bg-white dark:bg-gray-800 border shadow-sm transition-colors',
+            email.isPinned
+              ? 'border-blue-300 text-blue-500 hover:text-blue-600'
+              : 'border-gray-200 dark:border-gray-600 text-gray-400 hover:text-blue-500 hover:border-blue-300',
+          )}
+        >
+          {email.isPinned ? <PinOff size={13} /> : <Pin size={13} />}
+        </button>
+        <button
+          onClick={handleQuickDelete}
+          title="削除"
+          className="p-1.5 rounded-lg bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 text-gray-400 hover:text-red-500 hover:border-red-300 shadow-sm transition-colors"
+        >
+          <Trash2 size={13} />
+        </button>
+        <button
+          onClick={handleQuickBlock}
+          title="このアドレスをブロック"
+          className="p-1.5 rounded-lg bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 text-gray-400 hover:text-orange-500 hover:border-orange-300 shadow-sm transition-colors"
+        >
+          <ShieldBan size={13} />
+        </button>
+      </div>
     )}
     </div>
   );

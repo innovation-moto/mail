@@ -26,7 +26,9 @@ interface MailState {
   syncEmails: (accountId: string) => Promise<SyncResult>;
   sendEmail: (data: ComposeData) => Promise<void>;
   markRead: (emailId: string, isRead: boolean) => Promise<void>;
+  markAllRead: (accountId: string, folder: string) => Promise<void>;
   starEmail: (emailId: string, isStarred: boolean) => Promise<void>;
+  pinEmail: (emailId: string, isPinned: boolean) => Promise<void>;
   deleteEmail: (emailId: string) => Promise<void>;
   moveEmail: (emailId: string, folder: string) => Promise<void>;
   search: (accountId: string, query: string) => Promise<void>;
@@ -133,6 +135,26 @@ export const useMailStore = create<MailState>((set, get) => ({
       folderUnreadCounts: { ...s.folderUnreadCounts, [folder]: unreadCount },
     }));
     await api.mail.markRead(emailId, isRead);
+    // DBから全フォルダの未読数を再取得して同期（すべてのメール等も更新）
+    const email = get().emails.find((e) => e.id === emailId)
+      ?? get().searchResults?.find((e) => e.id === emailId);
+    if (email?.accountId) {
+      get().loadUnreadCounts(email.accountId).catch(() => {});
+    }
+  },
+
+  markAllRead: async (accountId, folder) => {
+    set((s) => ({
+      emails: s.emails.map((e) => (e.folder === folder ? { ...e, isRead: true } : e)),
+      searchResults: s.searchResults
+        ? s.searchResults.map((e) => (e.folder === folder ? { ...e, isRead: true } : e))
+        : null,
+      inboxUnreadCount: folder === 'INBOX' ? 0 : s.inboxUnreadCount,
+      folderUnreadCounts: { ...s.folderUnreadCounts, [folder]: 0 },
+    }));
+    await api.mail.markAllRead(accountId, folder);
+    // DBから全フォルダの未読数を再取得
+    get().loadUnreadCounts(accountId).catch(() => {});
   },
 
   starEmail: async (emailId, isStarred) => {
@@ -140,12 +162,39 @@ export const useMailStore = create<MailState>((set, get) => ({
     await api.mail.star(emailId, isStarred);
   },
 
+  pinEmail: async (emailId, isPinned) => {
+    get().updateEmailLocally(emailId, { isPinned });
+    // Pinnedフォルダ表示中は解除したメールをリストから除去
+    if (get().selectedFolder === 'Pinned' && !isPinned) {
+      set((s) => ({ emails: s.emails.filter((e) => e.id !== emailId) }));
+    }
+    await api.mail.pin(emailId, isPinned);
+  },
+
   deleteEmail: async (emailId) => {
-    set((s) => ({
-      emails: s.emails.filter((e) => e.id !== emailId),
-      selectedEmailId: s.selectedEmailId === emailId ? null : s.selectedEmailId,
-    }));
+    const target = get().emails.find((e) => e.id === emailId)
+      ?? get().searchResults?.find((e) => e.id === emailId);
+    set((s) => {
+      const newEmails = s.emails.filter((e) => e.id !== emailId);
+      // 削除時はGmail同様に既読扱いでカウントを減らす
+      const folderUnreadCounts = { ...s.folderUnreadCounts };
+      if (target && !target.isRead) {
+        const folder = target.folder;
+        folderUnreadCounts[folder] = Math.max(0, (folderUnreadCounts[folder] ?? 0) - 1);
+      }
+      const inboxUnreadCount = folderUnreadCounts['INBOX'] ?? s.inboxUnreadCount;
+      return {
+        emails: newEmails,
+        selectedEmailId: s.selectedEmailId === emailId ? null : s.selectedEmailId,
+        folderUnreadCounts,
+        inboxUnreadCount,
+      };
+    });
     await api.mail.delete(emailId);
+    // DBから全フォルダの未読数を再取得（すべてのメール等も更新）
+    if (target?.accountId) {
+      get().loadUnreadCounts(target.accountId).catch(() => {});
+    }
   },
 
   moveEmail: async (emailId, folder) => {

@@ -1,29 +1,60 @@
 'use client';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import {
-  Reply, Forward, Trash2, Star, StarOff, MoreHorizontal,
+  Reply, Forward, Trash2, Star, StarOff, Pin, PinOff, MoreHorizontal,
   Sparkles, ChevronDown, Paperclip, X, Copy, Check,
-  FolderInput, ShieldBan, Filter, Plus, Loader2, Download, AlertTriangle,
+  FolderInput, ShieldBan, Filter, Plus, Loader2, Download, AlertTriangle, CalendarPlus,
 } from 'lucide-react';
 import { useAccountStore } from '@/store/accountStore';
 import { useMailStore } from '@/store/mailStore';
 import { useUIStore } from '@/store/uiStore';
 import { api } from '@/lib/ipc';
-import { AiSummarizeResult, AiTone, Email, FilterCondition } from '@/types/shared';
+import { AiSummarizeResult, AiTone, CalendarEvent, Email, FilterCondition } from '@/types/shared';
 import { cn, formatFullDate, CATEGORY_LABELS, PRIORITY_LABELS, PRIORITY_COLORS } from '@/lib/utils';
 
 export function MailView() {
   const { selectedAccountId } = useAccountStore();
-  const { selectedEmail, starEmail, deleteEmail, updateEmailLocally } = useMailStore();
+  const { selectedEmail, starEmail, pinEmail, deleteEmail, updateEmailLocally } = useMailStore();
   const { openCompose } = useUIStore();
   const email = selectedEmail();
 
   if (!email) {
     return (
-      <div className="flex-1 flex items-center justify-center bg-gray-50 dark:bg-gray-900">
-        <div className="text-center text-gray-400">
-          <div className="text-4xl mb-3">✉️</div>
-          <p className="text-sm">メールを選択してください</p>
+      <div className="flex-1 flex items-center justify-center bg-gray-50 dark:bg-[#0f1623] relative overflow-hidden">
+        {/* 背景グラデーション装飾 */}
+        <div className="absolute inset-0 pointer-events-none">
+          <div className="absolute top-1/4 left-1/2 -translate-x-1/2 w-96 h-96 bg-blue-500/5 dark:bg-blue-500/10 rounded-full blur-3xl" />
+          <div className="absolute bottom-1/3 left-1/3 w-64 h-64 bg-indigo-500/5 dark:bg-indigo-500/8 rounded-full blur-3xl" />
+        </div>
+
+        <div className="relative text-center space-y-5 px-8">
+          {/* アイコン */}
+          <div className="flex items-center justify-center mx-auto w-20 h-20 rounded-2xl bg-white dark:bg-gray-800 shadow-lg dark:shadow-black/30 border border-gray-100 dark:border-gray-700">
+            <svg width="36" height="36" viewBox="0 0 24 24" fill="none" className="text-blue-500 dark:text-blue-400">
+              <rect x="2" y="4" width="20" height="16" rx="3" stroke="currentColor" strokeWidth="1.5" />
+              <path d="M2 8l10 6 10-6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+            </svg>
+          </div>
+
+          <div className="space-y-1.5">
+            <p className="text-base font-semibold text-gray-700 dark:text-gray-200">メールを選択</p>
+            <p className="text-xs text-gray-400 dark:text-gray-500 leading-relaxed">
+              左のリストからメールを選ぶと<br />ここに内容が表示されます
+            </p>
+          </div>
+
+          {/* ショートカットヒント */}
+          <div className="flex items-center justify-center gap-3 pt-1">
+            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 shadow-sm">
+              <kbd className="text-[10px] font-medium text-gray-400 dark:text-gray-500">↑</kbd>
+              <kbd className="text-[10px] font-medium text-gray-400 dark:text-gray-500">↓</kbd>
+              <span className="text-[10px] text-gray-400 dark:text-gray-500">で移動</span>
+            </div>
+            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 shadow-sm">
+              <kbd className="text-[10px] font-medium text-gray-400 dark:text-gray-500">Enter</kbd>
+              <span className="text-[10px] text-gray-400 dark:text-gray-500">で開く</span>
+            </div>
+          </div>
         </div>
       </div>
     );
@@ -36,8 +67,10 @@ export function MailView() {
         email={email}
         accountId={selectedAccountId ?? ''}
         onStar={(starred) => starEmail(email.id, starred)}
+        onPin={(pinned) => pinEmail(email.id, pinned)}
         onDelete={() => deleteEmail(email.id)}
         onReply={() => openCompose({ replyTo: email })}
+        onReplyAll={() => openCompose({ replyTo: email, replyAll: true })}
         onForward={() => openCompose({ forwardFrom: email })}
         onUpdateAi={(patch) => updateEmailLocally(email.id, patch as Partial<Email>)}
       />
@@ -46,13 +79,15 @@ export function MailView() {
 }
 
 function MailViewContent({
-  email, accountId, onStar, onDelete, onReply, onForward, onUpdateAi,
+  email, accountId, onStar, onPin, onDelete, onReply, onReplyAll, onForward, onUpdateAi,
 }: {
   email: Email;
   accountId: string;
   onStar: (starred: boolean) => void;
+  onPin: (pinned: boolean) => void;
   onDelete: () => void;
   onReply: () => void;
+  onReplyAll: () => void;
   onForward: () => void;
   onUpdateAi: (patch: Partial<Email>) => void;
 }) {
@@ -67,12 +102,17 @@ function MailViewContent({
   const [blockMenuOpen, setBlockMenuOpen] = useState(false);
   const [showQuickFilter, setShowQuickFilter] = useState(false);
   const [fetchingAttachments, setFetchingAttachments] = useState(false);
+  const [detectingCalendar, setDetectingCalendar] = useState(false);
+  const [calendarEvent, setCalendarEvent] = useState<CalendarEvent | null>(null);
+  const [calendarAdded, setCalendarAdded] = useState(false);
   // 添付ファイルはローカル状態で保持（同期によるリセットを防ぐ）
   const [localAttachments, setLocalAttachments] = useState(email.attachments ?? []);
 
-  // メールが切り替わったら添付をリセット
+  // メールが切り替わったら添付・カレンダーをリセット
   useEffect(() => {
     setLocalAttachments(email.attachments ?? []);
+    setCalendarEvent(null);
+    setCalendarAdded(false);
   }, [email.id]);
 
   // 添付ファイルがあるはずなのにDBに保存されていない場合、自動取得
@@ -113,6 +153,33 @@ function MailViewContent({
       alert((err as Error).message);
     } finally {
       setClassifying(false);
+    }
+  }
+
+  async function handleDetectCalendar() {
+    setDetectingCalendar(true);
+    setCalendarEvent(null);
+    try {
+      const event = await api.ai.detectCalendarEvent(email.id);
+      if (event) {
+        setCalendarEvent(event);
+      } else {
+        alert('このメールに予定情報が見つかりませんでした。');
+      }
+    } catch (err) {
+      alert((err as Error).message);
+    } finally {
+      setDetectingCalendar(false);
+    }
+  }
+
+  async function handleAddToCalendar() {
+    if (!calendarEvent) return;
+    try {
+      await api.ai.openCalendarEvent(calendarEvent);
+      setCalendarAdded(true);
+    } catch (err) {
+      alert((err as Error).message);
     }
   }
 
@@ -195,12 +262,16 @@ function MailViewContent({
 
         {/* Action bar */}
         <div className="flex items-center gap-1 mt-3">
-          <ActionButton icon={<Reply size={15} />} label="返信" onClick={onReply} />
-          <ActionButton icon={<Forward size={15} />} label="転送" onClick={onForward} />
           <ActionButton
             icon={email.isStarred ? <StarOff size={15} /> : <Star size={15} />}
             label={email.isStarred ? 'スター解除' : 'スター'}
             onClick={() => onStar(!email.isStarred)}
+          />
+          <ActionButton
+            icon={email.isPinned ? <PinOff size={15} /> : <Pin size={15} />}
+            label={email.isPinned ? 'ピン解除' : 'ピン留め'}
+            onClick={() => onPin(!email.isPinned)}
+            active={email.isPinned}
           />
           <ActionButton icon={<Trash2 size={15} />} label="削除" onClick={onDelete} variant="danger" />
 
@@ -223,6 +294,15 @@ function MailViewContent({
           >
             <Sparkles size={13} />
             {classifying ? '分類中…' : 'AI分類'}
+          </button>
+
+          <button
+            onClick={handleDetectCalendar}
+            disabled={detectingCalendar}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 hover:bg-green-200 dark:hover:bg-green-900/50 disabled:opacity-50 transition-colors"
+          >
+            <CalendarPlus size={13} />
+            {detectingCalendar ? '検出中…' : 'カレンダー'}
           </button>
 
           {/* Spam / Block menu */}
@@ -269,6 +349,43 @@ function MailViewContent({
         </div>
       </div>
 
+      {/* Calendar Event Card */}
+      {calendarEvent && (
+        <div className="mx-6 mt-4 p-4 bg-green-50 dark:bg-green-900/20 rounded-lg border border-green-200 dark:border-green-800 flex-shrink-0">
+          <div className="flex items-start justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <CalendarPlus size={14} className="text-green-500" />
+              <span className="text-sm font-medium text-green-700 dark:text-green-300">予定を検出しました</span>
+            </div>
+            <button onClick={() => setCalendarEvent(null)} className="text-gray-400 hover:text-gray-600">
+              <X size={14} />
+            </button>
+          </div>
+          <div className="space-y-1.5 mb-3">
+            <div className="text-sm font-semibold text-gray-800 dark:text-gray-200">{calendarEvent.title}</div>
+            <div className="text-xs text-gray-600 dark:text-gray-400">
+              {new Date(calendarEvent.startDate).toLocaleString('ja-JP', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'short', hour: '2-digit', minute: '2-digit' })}
+              {' 〜 '}
+              {new Date(calendarEvent.endDate).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })}
+            </div>
+            {calendarEvent.location && (
+              <div className="text-xs text-gray-500 dark:text-gray-400">📍 {calendarEvent.location}</div>
+            )}
+            {calendarEvent.description && (
+              <div className="text-xs text-gray-500 dark:text-gray-400 line-clamp-2">{calendarEvent.description}</div>
+            )}
+          </div>
+          <button
+            onClick={handleAddToCalendar}
+            disabled={calendarAdded}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg bg-green-600 hover:bg-green-700 text-white disabled:opacity-50 transition-colors"
+          >
+            {calendarAdded ? <Check size={13} /> : <CalendarPlus size={13} />}
+            {calendarAdded ? 'カレンダーに追加しました' : 'カレンダーに追加'}
+          </button>
+        </div>
+      )}
+
       {/* AI Summary */}
       {showSummary && summaryResult && (
         <div className="mx-6 mt-4 p-4 bg-purple-50 dark:bg-purple-900/20 rounded-lg border border-purple-200 dark:border-purple-800 flex-shrink-0">
@@ -301,10 +418,7 @@ function MailViewContent({
       {/* Email body */}
       <div className="flex-1 overflow-y-auto scrollbar-thin px-6 py-4">
         {email.bodyHtml ? (
-          <div
-            className="email-body"
-            dangerouslySetInnerHTML={{ __html: email.bodyHtml }}
-          />
+          <EmailHtmlView html={email.bodyHtml} />
         ) : (
           <pre className="text-sm text-gray-700 dark:text-gray-300 whitespace-pre-wrap font-sans leading-relaxed">
             {email.bodyText}
@@ -336,7 +450,7 @@ function MailViewContent({
 
       {/* Reply bar */}
       <div className="px-6 py-3 border-t border-gray-200 dark:border-gray-700 flex-shrink-0">
-        <AiReplyBar email={email} onReply={onReply} />
+        <AiReplyBar email={email} onReply={onReply} onReplyAll={onReplyAll} />
       </div>
 
       {/* Quick Filter Modal */}
@@ -351,9 +465,51 @@ function MailViewContent({
   );
 }
 
-function AiReplyBar({ email, onReply }: {
+function EmailHtmlView({ html }: { html: string }) {
+  const iframeRef = useRef<HTMLIFrameElement>(null);
+
+  const srcDoc = `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="color-scheme" content="light only">
+<style>
+  :root { color-scheme: light; }
+  html { background: #ffffff; }
+  body { background: #ffffff; margin: 8px; font-family: -apple-system, sans-serif; font-size: 14px; line-height: 1.6; color: #333; }
+</style>
+</head>
+<body>${html}</body>
+</html>`;
+
+  const handleLoad = useCallback(() => {
+    const iframe = iframeRef.current;
+    if (!iframe) return;
+    try {
+      const body = iframe.contentDocument?.body;
+      if (body) {
+        iframe.style.height = `${body.scrollHeight + 32}px`;
+      }
+    } catch { /* cross-origin guard */ }
+  }, []);
+
+  return (
+    <iframe
+      ref={iframeRef}
+      srcDoc={srcDoc}
+      onLoad={handleLoad}
+      sandbox="allow-same-origin allow-popups"
+      className="w-full border-0 block"
+      style={{ minHeight: '100px' }}
+      title="email-body"
+    />
+  );
+}
+
+function AiReplyBar({ email, onReply, onReplyAll }: {
   email: Email;
   onReply: () => void;
+  onReplyAll: () => void;
 }) {
   const { openCompose } = useUIStore();
   const [tone, setTone] = useState<AiTone>('polite');
@@ -401,6 +557,13 @@ function AiReplyBar({ email, onReply }: {
         >
           <Reply size={14} />
           返信
+        </button>
+        <button
+          onClick={onReplyAll}
+          className="flex items-center gap-1.5 px-4 py-2 text-sm rounded-lg border border-blue-300 dark:border-blue-700 text-blue-700 dark:text-blue-300 hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors"
+        >
+          <Reply size={14} />
+          全員に返信
         </button>
 
         <div className="flex-1" />
@@ -470,12 +633,13 @@ function AiReplyBar({ email, onReply }: {
 }
 
 function ActionButton({
-  icon, label, onClick, variant = 'default',
+  icon, label, onClick, variant = 'default', active = false,
 }: {
   icon: React.ReactNode;
   label: string;
   onClick: () => void;
   variant?: 'default' | 'danger';
+  active?: boolean;
 }) {
   return (
     <button
@@ -484,7 +648,9 @@ function ActionButton({
         'flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg transition-colors',
         variant === 'danger'
           ? 'text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20'
-          : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800',
+          : active
+            ? 'text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20 hover:bg-blue-100 dark:hover:bg-blue-900/30'
+            : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800',
       )}
     >
       {icon}

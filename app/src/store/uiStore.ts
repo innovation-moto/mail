@@ -7,6 +7,7 @@ type Modal = 'compose' | 'accountSetup' | 'settings' | null;
 
 interface ComposeState {
   replyTo?: Email;
+  replyAll?: boolean;
   forwardFrom?: Email;
 }
 

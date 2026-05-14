@@ -33,6 +33,7 @@ CREATE TABLE IF NOT EXISTS emails (
   date INTEGER NOT NULL,
   is_read INTEGER NOT NULL DEFAULT 0,
   is_starred INTEGER NOT NULL DEFAULT 0,
+  is_pinned INTEGER NOT NULL DEFAULT 0,
   is_deleted INTEGER NOT NULL DEFAULT 0,
   has_attachments INTEGER NOT NULL DEFAULT 0,
   ai_category TEXT,
@@ -95,6 +96,15 @@ CREATE TABLE IF NOT EXISTS filters (
   active INTEGER NOT NULL DEFAULT 1,
   created_at INTEGER NOT NULL,
   FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS signatures (
+  id TEXT PRIMARY KEY,
+  account_id TEXT,
+  name TEXT NOT NULL,
+  content TEXT NOT NULL,
+  is_default INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS settings (

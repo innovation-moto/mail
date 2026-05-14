@@ -17,6 +17,7 @@ interface EmailRow {
   date: number;
   is_read: number;
   is_starred: number;
+  is_pinned: number;
   is_deleted: number;
   has_attachments: number;
   ai_category: string | null;
@@ -51,6 +52,7 @@ function rowToEmail(row: EmailRow, attachments: Attachment[] = []): Email {
     date: row.date,
     isRead: row.is_read === 1,
     isStarred: row.is_starred === 1,
+    isPinned: row.is_pinned === 1,
     isDeleted: row.is_deleted === 1,
     hasAttachments: row.has_attachments === 1,
     aiCategory: row.ai_category,
@@ -151,8 +153,33 @@ export function markRead(emailId: string, isRead: boolean): void {
   getDb().prepare('UPDATE emails SET is_read = ? WHERE id = ?').run(isRead ? 1 : 0, emailId);
 }
 
+export function markAllReadInFolder(accountId: string, folder: string): string[] {
+  const rows = getDb()
+    .prepare("SELECT id FROM emails WHERE account_id = ? AND folder = ? AND is_read = 0 AND is_deleted = 0")
+    .all(accountId, folder) as { id: string }[];
+  if (rows.length > 0) {
+    getDb()
+      .prepare("UPDATE emails SET is_read = 1 WHERE account_id = ? AND folder = ? AND is_read = 0 AND is_deleted = 0")
+      .run(accountId, folder);
+  }
+  return rows.map((r) => r.id);
+}
+
 export function markStar(emailId: string, isStarred: boolean): void {
   getDb().prepare('UPDATE emails SET is_starred = ? WHERE id = ?').run(isStarred ? 1 : 0, emailId);
+}
+
+export function pinEmail(emailId: string, isPinned: boolean): void {
+  getDb().prepare('UPDATE emails SET is_pinned = ? WHERE id = ?').run(isPinned ? 1 : 0, emailId);
+}
+
+export function listPinnedEmails(accountId: string): Email[] {
+  const rows = getDb().prepare(`
+    SELECT * FROM emails
+    WHERE account_id = ? AND is_pinned = 1 AND is_deleted = 0
+    ORDER BY date DESC
+  `).all(accountId) as EmailRow[];
+  return rows.map((r) => rowToEmail(r));
 }
 
 export function markDeleted(emailId: string): void {
@@ -206,6 +233,12 @@ export function getAllFolderUnreadCounts(accountId: string): Record<string, numb
   const rows = db.prepare(`
     SELECT folder, COUNT(*) as count FROM emails
     WHERE account_id = ? AND is_read = 0 AND is_deleted = 0
+      AND folder NOT LIKE '%Trash%'
+      AND folder NOT LIKE '%ゴミ箱%'
+      AND folder NOT LIKE '%Deleted%'
+      AND folder NOT LIKE '%迷惑%'
+      AND folder NOT LIKE '%Spam%'
+      AND folder NOT LIKE '%Junk%'
     GROUP BY folder
   `).all(accountId) as { folder: string; count: number }[];
   return Object.fromEntries(rows.map((r) => [r.folder, r.count]));

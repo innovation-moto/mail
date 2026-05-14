@@ -7,6 +7,7 @@ import { registerAiHandlers } from './ipc/ai';
 import { registerBlocklistHandlers } from './ipc/blocklist';
 import { registerSettingsHandlers } from './ipc/settings';
 import { registerFilterHandlers } from './ipc/filters';
+import { registerSignatureHandlers } from './ipc/signatures';
 import { startSync, stopSync, syncAllAccounts } from './services/sync';
 import { getSetting } from './db/queries/settings';
 import { initGemini } from './services/gemini';
@@ -17,6 +18,12 @@ const isDev = !app.isPackaged;
 // surfacing as Electron error dialogs. Log them to the console instead.
 process.on('unhandledRejection', (reason) => {
   console.error('[unhandledRejection]', reason);
+});
+
+// Prevent uncaught exceptions (e.g. IMAP Socket timeout) from
+// crashing the main process and showing the error dialog.
+process.on('uncaughtException', (err) => {
+  console.error('[uncaughtException]', err);
 });
 
 let mainWindow: BrowserWindow | null = null;
@@ -71,6 +78,7 @@ function initializeApp(): void {
   registerBlocklistHandlers();
   registerSettingsHandlers();
   registerFilterHandlers();
+  registerSignatureHandlers();
 
   // Initialize AI if API key exists
   const apiKey = getSetting('openai_api_key') || getSetting('gemini_api_key');

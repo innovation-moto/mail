@@ -1,5 +1,5 @@
 import OpenAI from 'openai';
-import { AiTone, AiCategory, AiPriority, AiClassifyResult, AiSummarizeResult, SmartSearchResult } from '../../shared/types';
+import { AiTone, AiCategory, AiPriority, AiClassifyResult, AiSummarizeResult, SmartSearchResult, CalendarEvent } from '../../shared/types';
 import { Email } from '../../shared/types';
 
 let client: OpenAI | null = null;
@@ -136,3 +136,75 @@ ${emailSummaries}
   } catch {}
   return { emails: [], answer: text };
 }
+
+export async function detectCalendarEvent(
+  subject: string,
+  bodyText: string,
+  emailDate: number,
+  fromName: string,
+  fromAddress: string,
+): Promise<CalendarEvent | null> {
+  const today = new Date(emailDate).toISOString().split('T')[0];
+  const prompt = `以下のメールに予定・イベント・ミーティング・セミナー等の日程情報が含まれているか判断し、含まれていればJSON形式で返してください。
+
+差出人名: ${fromName}
+差出人メール: ${fromAddress}
+件名: ${subject}
+受信日: ${today}
+本文:
+${bodyText.slice(0, 3000)}
+
+---
+予定が含まれる場合のみ、以下のJSON形式のみで回答してください（コードブロック不要）:
+{
+  "hasEvent": true,
+  "companyName": "差出人の企業・組織名（本文・差出人名・メールアドレスのドメインから判断。個人の場合は差出人名。株式会社等の法人格は省略可）",
+  "eventTitle": "イベント・ミーティングのタイトルのみ（企業名は含めない。定例会・MTG・打ち合わせなど簡潔に）",
+  "startDate": "YYYY-MM-DDTHH:MM:SS",
+  "endDate": "YYYY-MM-DDTHH:MM:SS",
+  "isOnline": true or false,
+  "region": "オフラインの場合の地域名（東京・京都など都市名のみ）。オンラインの場合は空文字",
+  "description": "予定の詳細説明"
+}
+
+予定が含まれない場合: {"hasEvent": false}
+
+注意:
+- 時刻が不明な場合は開始を09:00、終了を10:00とする
+- 日付が不明な場合はnullを返す
+- オンライン判定: Zoom/Meet/Teams/オンライン等のキーワードがあればtrue
+- regionは都市・地域名のみ（例: 東京、大阪、京都）
+- companyNameは簡潔に（例: INNOVATION MUSIC、Google、freee）`;
+
+  const text = (await chat(prompt)).trim();
+  try {
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) return null;
+    const parsed = JSON.parse(jsonMatch[0]) as {
+      hasEvent: boolean;
+      companyName?: string;
+      eventTitle?: string;
+      startDate?: string;
+      endDate?: string;
+      isOnline?: boolean;
+      region?: string;
+      description?: string;
+    };
+    if (!parsed.hasEvent || !parsed.startDate) return null;
+
+    const place = parsed.isOnline ? 'オンライン' : (parsed.region || '');
+    const baseTitle = [parsed.companyName, parsed.eventTitle ?? subject].filter(Boolean).join(' ');
+    const title = place ? `【${place}】${baseTitle}` : baseTitle;
+
+    return {
+      title,
+      startDate: parsed.startDate,
+      endDate: parsed.endDate ?? parsed.startDate,
+      location: place,
+      isOnline: parsed.isOnline ?? false,
+      description: parsed.description ?? '',
+    };
+  } catch {}
+  return null;
+}
+

@@ -1,6 +1,6 @@
 'use client';
 import { useState } from 'react';
-import { X, CheckCircle, AlertCircle, Loader2 } from 'lucide-react';
+import { X, CheckCircle, AlertCircle, Loader2, Info } from 'lucide-react';
 import { useAccountStore } from '@/store/accountStore';
 import { useUIStore } from '@/store/uiStore';
 import { AccountConfig, PROVIDER_PRESETS, TestConnectionResult } from '@/types/shared';
@@ -13,7 +13,7 @@ const PROVIDERS = [
 ];
 
 export function AccountSetupModal() {
-  const { createAccount, testConnection } = useAccountStore();
+  const { createAccount, testConnection, loadAccounts } = useAccountStore();
   const { closeModal } = useUIStore();
   const [provider, setProvider] = useState('gmail');
   const [form, setForm] = useState<Partial<AccountConfig>>({ ...PROVIDER_PRESETS.gmail, provider: 'gmail' });
@@ -21,6 +21,20 @@ export function AccountSetupModal() {
   const [tested, setTested] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+
+  async function handleMicrosoftLogin() {
+    setLoading(true);
+    setError('');
+    try {
+      await window.electronAPI.accounts.connectMicrosoft(form.name ?? '');
+      await loadAccounts();
+      closeModal();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  }
 
   function update(key: keyof AccountConfig, value: unknown) {
     setForm((prev) => ({ ...prev, [key]: value }));
@@ -100,9 +114,34 @@ export function AccountSetupModal() {
             </div>
           </div>
 
+          {provider === 'outlook' && (
+            <div className="space-y-3">
+              <button
+                onClick={handleMicrosoftLogin}
+                disabled={loading}
+                className="w-full flex items-center justify-center gap-3 py-2.5 rounded-xl border-2 border-gray-200 dark:border-gray-600 hover:border-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors disabled:opacity-50"
+              >
+                {loading ? <Loader2 size={16} className="animate-spin text-blue-500" /> : (
+                  <svg width="18" height="18" viewBox="0 0 21 21" fill="none">
+                    <rect x="1" y="1" width="9" height="9" fill="#F25022"/>
+                    <rect x="11" y="1" width="9" height="9" fill="#7FBA00"/>
+                    <rect x="1" y="11" width="9" height="9" fill="#00A4EF"/>
+                    <rect x="11" y="11" width="9" height="9" fill="#FFB900"/>
+                  </svg>
+                )}
+                <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Microsoftでログイン</span>
+              </button>
+              <div className="flex items-center gap-2">
+                <div className="flex-1 h-px bg-gray-200 dark:bg-gray-700" />
+                <span className="text-xs text-gray-400">または手動で設定</span>
+                <div className="flex-1 h-px bg-gray-200 dark:bg-gray-700" />
+              </div>
+            </div>
+          )}
+
           <Field label="名前" value={form.name ?? ''} onChange={(v) => update('name', v)} placeholder="表示名" />
           <Field label="メールアドレス" value={form.email ?? ''} onChange={(v) => update('email', v)} placeholder="you@gmail.com" type="email" />
-          <Field label="パスワード" value={form.password ?? ''} onChange={(v) => update('password', v)} placeholder="アプリパスワード" type="password" />
+          <Field label="パスワード" value={form.password ?? ''} onChange={(v) => update('password', v)} placeholder={provider === 'outlook' ? 'アプリパスワード（16桁）' : 'アプリパスワード'} type="password" />
 
           {provider === 'custom' && (
             <>

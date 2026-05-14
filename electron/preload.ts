@@ -6,6 +6,7 @@ const api = {
     create: (config: unknown) => ipcRenderer.invoke('accounts:create', config),
     update: (id: string, config: unknown) => ipcRenderer.invoke('accounts:update', id, config),
     delete: (id: string) => ipcRenderer.invoke('accounts:delete', id),
+    connectMicrosoft: (name: string) => ipcRenderer.invoke('accounts:connectMicrosoft', name),
     test: (config: unknown) => ipcRenderer.invoke('accounts:test', config),
   },
   mail: {
@@ -16,7 +17,9 @@ const api = {
     sync: (accountId: string, folder?: string) => ipcRenderer.invoke('mail:sync', accountId, folder),
     send: (data: unknown) => ipcRenderer.invoke('mail:send', data),
     markRead: (emailId: string, isRead: boolean) => ipcRenderer.invoke('mail:markRead', emailId, isRead),
+    markAllRead: (accountId: string, folder: string) => ipcRenderer.invoke('mail:markAllRead', accountId, folder),
     star: (emailId: string, isStarred: boolean) => ipcRenderer.invoke('mail:star', emailId, isStarred),
+    pin: (emailId: string, isPinned: boolean) => ipcRenderer.invoke('mail:pin', emailId, isPinned),
     delete: (emailId: string) => ipcRenderer.invoke('mail:delete', emailId),
     move: (emailId: string, folder: string) => ipcRenderer.invoke('mail:move', emailId, folder),
     search: (accountId: string, query: string) => ipcRenderer.invoke('mail:search', accountId, query),
@@ -30,6 +33,8 @@ const api = {
     summarize: (emailId: string) => ipcRenderer.invoke('ai:summarize', emailId),
     classify: (emailId: string) => ipcRenderer.invoke('ai:classify', emailId),
     smartSearch: (accountId: string, query: string) => ipcRenderer.invoke('ai:smartSearch', accountId, query),
+    detectCalendarEvent: (emailId: string) => ipcRenderer.invoke('ai:detectCalendarEvent', emailId),
+    openCalendarEvent: (event: unknown) => ipcRenderer.invoke('ai:openCalendarEvent', event),
     setApiKey: (apiKey: string) => ipcRenderer.invoke('ai:setApiKey', apiKey),
     getApiKey: () => ipcRenderer.invoke('ai:getApiKey'),
     isEnabled: () => ipcRenderer.invoke('ai:isEnabled'),
@@ -54,6 +59,13 @@ const api = {
   folders: {
     create: (accountId: string, path: string) => ipcRenderer.invoke('folders:create', accountId, path),
     delete: (accountId: string, path: string) => ipcRenderer.invoke('folders:delete', accountId, path),
+  },
+  signatures: {
+    list: (accountId?: string) => ipcRenderer.invoke('signatures:list', accountId),
+    getDefault: (accountId: string) => ipcRenderer.invoke('signatures:getDefault', accountId),
+    create: (data: unknown) => ipcRenderer.invoke('signatures:create', data),
+    update: (id: string, data: unknown) => ipcRenderer.invoke('signatures:update', id, data),
+    delete: (id: string) => ipcRenderer.invoke('signatures:delete', id),
   },
   on: (channel: string, callback: (...args: unknown[]) => void) => {
     const handler = (_: unknown, ...args: unknown[]) => callback(...args);

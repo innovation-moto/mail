@@ -12,6 +12,10 @@ interface AccountRow {
   smtp_host: string;
   smtp_port: number;
   smtp_secure: number;
+  avatar: string | null;
+  oauth_access_token: string | null;
+  oauth_refresh_token: string | null;
+  oauth_expires_at: number | null;
   created_at: number;
 }
 
@@ -27,6 +31,10 @@ function rowToAccount(row: AccountRow): Account {
     smtpHost: row.smtp_host,
     smtpPort: row.smtp_port,
     smtpSecure: row.smtp_secure === 1,
+    avatar: row.avatar ?? undefined,
+    oauthAccessToken: row.oauth_access_token ?? undefined,
+    oauthRefreshToken: row.oauth_refresh_token ?? undefined,
+    oauthExpiresAt: row.oauth_expires_at ?? undefined,
     createdAt: row.created_at,
   };
 }
@@ -87,6 +95,10 @@ export function updateAccount(
   if (config.smtpHost !== undefined) { fields.push('smtp_host = ?'); values.push(config.smtpHost); }
   if (config.smtpPort !== undefined) { fields.push('smtp_port = ?'); values.push(config.smtpPort); }
   if (config.smtpSecure !== undefined) { fields.push('smtp_secure = ?'); values.push(config.smtpSecure ? 1 : 0); }
+  if (config.avatar !== undefined) { fields.push('avatar = ?'); values.push(config.avatar ?? null); }
+  if ((config as any).oauthAccessToken !== undefined) { fields.push('oauth_access_token = ?'); values.push((config as any).oauthAccessToken ?? null); }
+  if ((config as any).oauthRefreshToken !== undefined) { fields.push('oauth_refresh_token = ?'); values.push((config as any).oauthRefreshToken ?? null); }
+  if ((config as any).oauthExpiresAt !== undefined) { fields.push('oauth_expires_at = ?'); values.push((config as any).oauthExpiresAt ?? null); }
   if (encryptedPassword !== undefined) { fields.push('password_encrypted = ?'); values.push(encryptedPassword); }
 
   if (fields.length === 0) return;

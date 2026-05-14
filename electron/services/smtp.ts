@@ -1,5 +1,25 @@
 import nodemailer from 'nodemailer';
 import { Account, ComposeData, TestConnectionResult } from '../../shared/types';
+import { refreshMicrosoftToken } from './microsoftAuth';
+import { updateAccount } from '../db/queries/accounts';
+
+async function getSmtpAuth(account: Account, password: string) {
+  const a = account as Account & { oauthRefreshToken?: string; oauthAccessToken?: string; oauthExpiresAt?: number };
+  if (a.oauthRefreshToken) {
+    let accessToken = a.oauthAccessToken;
+    if (!accessToken || !a.oauthExpiresAt || a.oauthExpiresAt < Date.now() + 60000) {
+      const tokens = await refreshMicrosoftToken(a.oauthRefreshToken);
+      updateAccount(account.id, {
+        oauthAccessToken: tokens.accessToken,
+        oauthRefreshToken: tokens.refreshToken,
+        oauthExpiresAt: tokens.expiresAt,
+      } as any);
+      accessToken = tokens.accessToken;
+    }
+    return { type: 'OAuth2' as const, user: account.email, accessToken };
+  }
+  return { user: account.email, pass: password };
+}
 
 export async function testSmtpConnection(
   host: string,
@@ -26,11 +46,12 @@ export async function testSmtpConnection(
 }
 
 export async function sendEmail(account: Account, password: string, data: ComposeData): Promise<void> {
+  const auth = await getSmtpAuth(account, password);
   const transporter = nodemailer.createTransport({
     host: account.smtpHost,
     port: account.smtpPort,
     secure: account.smtpSecure,
-    auth: { user: account.email, pass: password },
+    auth,
     tls: { rejectUnauthorized: false },
   });
 

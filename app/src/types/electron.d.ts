@@ -13,6 +13,8 @@ import type {
   SmartSearchResult,
   SyncResult,
   FilterRule,
+  CalendarEvent,
+  Signature,
 } from '@/types/shared';
 
 interface ElectronAPI {
@@ -22,6 +24,7 @@ interface ElectronAPI {
     update: (id: string, config: Partial<AccountConfig>) => Promise<Account>;
     delete: (id: string) => Promise<void>;
     test: (config: AccountConfig) => Promise<TestConnectionResult>;
+    connectMicrosoft: (name: string) => Promise<Account>;
   };
   mail: {
     fetchFolders: (accountId: string) => Promise<Folder[]>;
@@ -30,7 +33,9 @@ interface ElectronAPI {
     sync: (accountId: string, folder?: string) => Promise<SyncResult>;
     send: (data: ComposeData) => Promise<void>;
     markRead: (emailId: string, isRead: boolean) => Promise<void>;
+    markAllRead: (accountId: string, folder: string) => Promise<void>;
     star: (emailId: string, isStarred: boolean) => Promise<void>;
+    pin: (emailId: string, isPinned: boolean) => Promise<void>;
     delete: (emailId: string) => Promise<void>;
     move: (emailId: string, folder: string) => Promise<void>;
     search: (accountId: string, query: string) => Promise<Email[]>;
@@ -40,6 +45,8 @@ interface ElectronAPI {
     downloadAttachment: (attachmentId: string) => Promise<string | null>;
   };
   ai: {
+    detectCalendarEvent: (emailId: string) => Promise<CalendarEvent | null>;
+    openCalendarEvent: (event: CalendarEvent) => Promise<void>;
     generateReply: (emailId: string, tone: AiTone) => Promise<string>;
     summarize: (emailId: string) => Promise<AiSummarizeResult>;
     classify: (emailId: string) => Promise<AiClassifyResult>;
@@ -67,6 +74,13 @@ interface ElectronAPI {
   folders: {
     create: (accountId: string, path: string) => Promise<void>;
     delete: (accountId: string, path: string) => Promise<void>;
+  };
+  signatures: {
+    list: (accountId?: string) => Promise<Signature[]>;
+    getDefault: (accountId: string) => Promise<Signature | null>;
+    create: (data: Omit<Signature, 'id' | 'createdAt'>) => Promise<Signature[]>;
+    update: (id: string, data: Partial<Omit<Signature, 'id' | 'createdAt'>>) => Promise<Signature[]>;
+    delete: (id: string) => Promise<Signature[]>;
   };
   on: (channel: string, callback: (...args: unknown[]) => void) => () => void;
 }

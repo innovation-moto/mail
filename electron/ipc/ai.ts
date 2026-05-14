@@ -1,8 +1,9 @@
 import { ipcMain, safeStorage } from 'electron';
-import { AiTone } from '../../shared/types';
+import { AiTone, CalendarEvent } from '../../shared/types';
 import { getEmail, updateAiFields, getRecentEmailsForSearch } from '../db/queries/emails';
 import { getSetting, setSetting } from '../db/queries/settings';
-import { initGemini, generateReply, summarizeEmail, classifyEmail, smartSearch } from '../services/gemini';
+import { initGemini, generateReply, summarizeEmail, classifyEmail, smartSearch, detectCalendarEvent } from '../services/gemini';
+import { openCalendarEvent } from '../services/calendar';
 
 function ensureAiEnabled(): void {
   const enabled = getSetting('ai_enabled');
@@ -39,6 +40,17 @@ export function registerAiHandlers(): void {
     ensureAiEnabled();
     const emails = getRecentEmailsForSearch(accountId, 200);
     return smartSearch(query, emails);
+  });
+
+  ipcMain.handle('ai:detectCalendarEvent', async (_e, emailId: string) => {
+    ensureAiEnabled();
+    const email = getEmail(emailId);
+    if (!email) throw new Error('メールが見つかりません');
+    return detectCalendarEvent(email.subject, email.bodyText, email.date, email.from.name, email.from.address);
+  });
+
+  ipcMain.handle('ai:openCalendarEvent', async (_e, event: CalendarEvent) => {
+    await openCalendarEvent(event);
   });
 
   ipcMain.handle('ai:setApiKey', (_e, apiKey: string) => {

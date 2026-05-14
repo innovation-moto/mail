@@ -13,6 +13,7 @@ export const api = {
   get settings() { return getAPI().settings; },
   get filters() { return getAPI().filters; },
   get folders() { return getAPI().folders; },
+  get signatures() { return getAPI().signatures; },
   on(channel: string, callback: (...args: unknown[]) => void) {
     return getAPI().on(channel, callback);
   },

@@ -28,6 +28,10 @@ export interface Account {
   smtpHost: string;
   smtpPort: number;
   smtpSecure: boolean;
+  avatar?: string;
+  oauthAccessToken?: string;
+  oauthRefreshToken?: string;
+  oauthExpiresAt?: number;
   createdAt: number;
 }
 
@@ -72,6 +76,7 @@ export interface Email {
   date: number;
   isRead: boolean;
   isStarred: boolean;
+  isPinned: boolean;
   isDeleted: boolean;
   hasAttachments: boolean;
   aiCategory: string | null;
@@ -111,6 +116,15 @@ export interface BlockEntry {
   createdAt: number;
 }
 
+export interface Signature {
+  id: string;
+  accountId: string | null;
+  name: string;
+  content: string;
+  isDefault: boolean;
+  createdAt: number;
+}
+
 export interface Settings {
   aiEnabled: boolean;
   geminiApiKey: string;
@@ -142,6 +156,15 @@ export interface SmartSearchResult {
 export interface SyncResult {
   added: number;
   updated: number;
+}
+
+export interface CalendarEvent {
+  title: string;
+  startDate: string;
+  endDate: string;
+  location: string;
+  isOnline: boolean;
+  description: string;
 }
 
 export interface TestConnectionResult {

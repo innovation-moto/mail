@@ -28,6 +28,10 @@ export interface Account {
   smtpHost: string;
   smtpPort: number;
   smtpSecure: boolean;
+  avatar?: string;
+  oauthAccessToken?: string;
+  oauthRefreshToken?: string;
+  oauthExpiresAt?: number;
   createdAt: number;
 }
 
@@ -72,6 +76,7 @@ export interface Email {
   date: number;
   isRead: boolean;
   isStarred: boolean;
+  isPinned: boolean;
   isDeleted: boolean;
   hasAttachments: boolean;
   aiCategory: string | null;
@@ -142,6 +147,24 @@ export interface SmartSearchResult {
 export interface SyncResult {
   added: number;
   updated: number;
+}
+
+export interface CalendarEvent {
+  title: string;       // 【場所】タイトル名 形式
+  startDate: string;   // ISO 8601
+  endDate: string;     // ISO 8601
+  location: string;    // オンライン or 地域名
+  isOnline: boolean;
+  description: string;
+}
+
+export interface Signature {
+  id: string;
+  accountId: string | null;
+  name: string;
+  content: string;
+  isDefault: boolean;
+  createdAt: number;
 }
 
 export interface TestConnectionResult {

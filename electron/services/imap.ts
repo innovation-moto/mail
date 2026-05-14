@@ -4,20 +4,61 @@ import { parseRawEmail, ParsedEmail } from './parser';
 import { upsertEmail, UpsertEmailData, getMaxUid, getEmailUidsForFolder, updateEmailFlags, saveAttachments } from '../db/queries/emails';
 import { isBlocked } from '../db/queries/blocklist';
 import { applyFilters } from '../db/queries/filters';
+import { refreshMicrosoftToken, buildXOAuth2Token } from './microsoftAuth';
+import { updateAccount } from '../db/queries/accounts';
+
+async function getValidAccessToken(account: Account): Promise<string> {
+  const a = account as Account & { oauthAccessToken?: string; oauthRefreshToken?: string; oauthExpiresAt?: number };
+  if (!a.oauthRefreshToken) throw new Error('OAuthトークンがありません');
+  if (a.oauthExpiresAt && a.oauthExpiresAt > Date.now() + 60000) {
+    return a.oauthAccessToken!;
+  }
+  const tokens = await refreshMicrosoftToken(a.oauthRefreshToken);
+  updateAccount(account.id, {
+    oauthAccessToken: tokens.accessToken,
+    oauthRefreshToken: tokens.refreshToken,
+    oauthExpiresAt: tokens.expiresAt,
+  } as any);
+  return tokens.accessToken;
+}
 
 function createClient(account: Account, password: string): ImapFlow {
+  const a = account as Account & { oauthAccessToken?: string };
+  const auth = a.oauthAccessToken
+    ? { user: account.email, accessToken: a.oauthAccessToken }
+    : { user: account.email, pass: password };
   return new ImapFlow({
     host: account.imapHost,
     port: account.imapPort,
     secure: account.imapSecure,
-    auth: { user: account.email, pass: password },
+    auth,
     logger: false,
     tls: { rejectUnauthorized: false },
-    connectionTimeout: 30000,
-    socketTimeout: 60000,
-    greetingTimeout: 15000,
+    connectionTimeout: 20000,
+    socketTimeout: 30000,
+    greetingTimeout: 10000,
     disableAutoIdle: true,
   });
+}
+
+async function createClientWithRefresh(account: Account, password: string): Promise<ImapFlow> {
+  const a = account as Account & { oauthRefreshToken?: string };
+  if (a.oauthRefreshToken) {
+    const accessToken = await getValidAccessToken(account);
+    return new ImapFlow({
+      host: account.imapHost,
+      port: account.imapPort,
+      secure: account.imapSecure,
+      auth: { user: account.email, accessToken },
+      logger: false,
+      tls: { rejectUnauthorized: false },
+      connectionTimeout: 20000,
+      socketTimeout: 30000,
+      greetingTimeout: 10000,
+      disableAutoIdle: true,
+    });
+  }
+  return createClient(account, password);
 }
 
 async function safeLogout(client: ImapFlow): Promise<void> {
@@ -292,6 +333,65 @@ export async function imapMarkRead(
     }
   } finally {
     lock.release();
+    await safeLogout(client);
+  }
+}
+
+export async function imapMarkAllRead(
+  account: Account,
+  password: string,
+  folder: string,
+): Promise<void> {
+  const client = createClient(account, password);
+  await client.connect();
+  const lock = await client.getMailboxLock(folder);
+  try {
+    await client.messageFlagsAdd('1:*', ['\\Seen']);
+  } finally {
+    lock.release();
+    await safeLogout(client);
+  }
+}
+
+const PINNED_LABEL = 'Pinned';
+
+export async function imapPinEmail(
+  account: Account,
+  password: string,
+  folder: string,
+  uid: number,
+  messageId: string,
+  isPinned: boolean,
+): Promise<void> {
+  const client = createClient(account, password);
+  await client.connect();
+  try {
+    if (isPinned) {
+      // Pinnedラベルを作成（存在しても無視）
+      try { await client.mailboxCreate(PINNED_LABEL); } catch {}
+      const lock = await client.getMailboxLock(folder);
+      try {
+        // メールをPinnedラベルにコピー（Gmailではラベル付与と同義）
+        await client.messageCopy(String(uid), PINNED_LABEL, { uid: true });
+      } finally {
+        lock.release();
+      }
+    } else {
+      // PinnedフォルダでmessageIdを検索して削除（Gmailではラベル削除）
+      let lock: MailboxLockObject | null = null;
+      try {
+        lock = await client.getMailboxLock(PINNED_LABEL);
+        const uids = await client.search({ header: { 'message-id': messageId } });
+        if (Array.isArray(uids) && uids.length > 0) {
+          await client.messageDelete(uids as number[], {});
+        }
+      } catch {
+        // Pinnedフォルダが存在しない場合は無視
+      } finally {
+        lock?.release();
+      }
+    }
+  } finally {
     await safeLogout(client);
   }
 }

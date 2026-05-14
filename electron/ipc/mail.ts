@@ -4,9 +4,12 @@ import { ComposeData } from '../../shared/types';
 import { getAccount, getEncryptedPassword } from '../db/queries/accounts';
 import {
   listEmails,
+  listPinnedEmails,
   getEmail,
   markRead,
+  markAllReadInFolder,
   markStar,
+  pinEmail,
   markDeleted,
   moveEmail,
   searchEmails,
@@ -14,7 +17,7 @@ import {
   getAttachmentContent,
   saveAttachments,
 } from '../db/queries/emails';
-import { syncFolder, fetchFolders, imapMarkRead, imapDeleteEmail, imapMoveEmail, fetchAttachmentsForEmail } from '../services/imap';
+import { syncFolder, fetchFolders, imapMarkRead, imapMarkAllRead, imapPinEmail, imapDeleteEmail, imapMoveEmail, fetchAttachmentsForEmail } from '../services/imap';
 import { sendEmail } from '../services/smtp';
 
 function getPassword(accountId: string): string {
@@ -32,6 +35,7 @@ export function registerMailHandlers(): void {
   });
 
   ipcMain.handle('mail:fetchEmails', (_e, accountId: string, folder: string, limit = 50, offset = 0) => {
+    if (folder === 'Pinned') return listPinnedEmails(accountId);
     return listEmails(accountId, folder, limit, offset);
   });
 
@@ -65,13 +69,41 @@ export function registerMailHandlers(): void {
     } catch {}
   });
 
+  ipcMain.handle('mail:markAllRead', async (_e, accountId: string, folder: string) => {
+    markAllReadInFolder(accountId, folder);
+    try {
+      const account = getAccount(accountId);
+      if (!account) return;
+      const password = getPassword(accountId);
+      await imapMarkAllRead(account, password, folder);
+    } catch (err) {
+      console.error('[markAllRead] IMAP error:', (err as Error).message);
+    }
+  });
+
   ipcMain.handle('mail:star', (_e, emailId: string, isStarred: boolean) => {
     markStar(emailId, isStarred);
+  });
+
+  ipcMain.handle('mail:pin', async (_e, emailId: string, isPinned: boolean) => {
+    pinEmail(emailId, isPinned);
+    try {
+      const email = getEmail(emailId);
+      if (!email) return;
+      const account = getAccount(email.accountId);
+      if (!account) return;
+      const password = getPassword(email.accountId);
+      await imapPinEmail(account, password, email.folder, email.uid, email.messageId ?? '', isPinned);
+    } catch (err) {
+      console.error('[pin] IMAP error:', (err as Error).message);
+    }
   });
 
   ipcMain.handle('mail:delete', async (_e, emailId: string) => {
     const email = getEmail(emailId);
     if (!email) return;
+    // Gmailと同様、ゴミ箱移動時に既読にする
+    if (!email.isRead) markRead(emailId, true);
     markDeleted(emailId);
     try {
       const account = getAccount(email.accountId);

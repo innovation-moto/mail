@@ -1,11 +1,12 @@
 'use client';
 import { useState, useEffect } from 'react';
-import { X, Minimize2, Maximize2, Send, Paperclip, Sparkles, ChevronDown } from 'lucide-react';
+import { X, Minimize2, Maximize2, Send, Paperclip, Sparkles, ChevronDown, PenLine, ChevronRight } from 'lucide-react';
 import { useAccountStore } from '@/store/accountStore';
 import { useMailStore } from '@/store/mailStore';
 import { useUIStore } from '@/store/uiStore';
-import { ComposeData } from '@/types/shared';
+import { ComposeData, Signature } from '@/types/shared';
 import { cn } from '@/lib/utils';
+import { api } from '@/lib/ipc';
 
 export function ComposeModal() {
   const { selectedAccountId, accounts } = useAccountStore();
@@ -21,36 +22,85 @@ export function ComposeModal() {
   const [subject, setSubject] = useState('');
   const [body, setBody] = useState('');
   const [showCcBcc, setShowCcBcc] = useState(false);
+  const [signatures, setSignatures] = useState<Signature[]>([]);
+  const [selectedSignatureId, setSelectedSignatureId] = useState<string | null>(null);
+  const [showSignatureMenu, setShowSignatureMenu] = useState(false);
+  const [quotedContent, setQuotedContent] = useState<{ header: string; body: string } | null>(null);
+  const [showQuoted, setShowQuoted] = useState(false);
 
-  const { replyTo, forwardFrom } = composeState;
+  const { replyTo, replyAll, forwardFrom } = composeState;
+
+  const SIGNATURE_SEPARATOR = '\n\n';
+
+  function buildBodyWithSignature(baseBody: string, sig: Signature | null): string {
+    const stripped = baseBody.includes(SIGNATURE_SEPARATOR)
+      ? baseBody.slice(0, baseBody.lastIndexOf(SIGNATURE_SEPARATOR))
+      : baseBody;
+    return sig ? `${stripped}${SIGNATURE_SEPARATOR}${sig.content}` : stripped;
+  }
 
   useEffect(() => {
+    // 返信・転送の内容をまず設定
     if (replyTo) {
       setTo(replyTo.from.address);
       setSubject(`Re: ${replyTo.subject.replace(/^Re:\s*/i, '')}`);
-      setBody(replyTo.bodyText
-        ? `\n\n---\n${replyTo.from.name || replyTo.from.address} の返信:\n${replyTo.bodyText}`
-        : '');
-    }
-    if (forwardFrom) {
+      if (replyAll) {
+        const myEmail = accounts.find((a) => a.id === fromAccountId)?.email ?? '';
+        const ccAddrs = [...replyTo.to, ...(replyTo.cc ?? [])]
+          .map((a) => a.address)
+          .filter((addr) => addr !== myEmail && addr !== replyTo.from.address);
+        if (ccAddrs.length > 0) {
+          setCc(ccAddrs.join(', '));
+          setShowCcBcc(true);
+        }
+      }
+      if (replyTo.bodyText) {
+        const date = new Date(replyTo.date).toLocaleString('ja-JP');
+        setQuotedContent({
+          header: `${date}, ${replyTo.from.name || replyTo.from.address} <${replyTo.from.address}>:`,
+          body: replyTo.bodyText,
+        });
+      }
+    } else if (forwardFrom) {
       setSubject(`Fwd: ${forwardFrom.subject.replace(/^Fwd:\s*/i, '')}`);
-      setBody(
-        `\n\n---------- 転送メッセージ ----------\n差出人: ${forwardFrom.from.address}\n件名: ${forwardFrom.subject}\n\n${forwardFrom.bodyText}`,
-      );
+      const date = new Date(forwardFrom.date).toLocaleString('ja-JP');
+      setQuotedContent({
+        header: `---------- 転送メッセージ ----------\n差出人: ${forwardFrom.from.address}\n件名: ${forwardFrom.subject}\n日時: ${date}`,
+        body: forwardFrom.bodyText,
+      });
     }
+    setBody('');
+
+    // 署名を非同期で読み込んで追記
+    api.signatures.list(fromAccountId || undefined).then((sigs) => {
+      setSignatures(sigs);
+      const def = sigs.find((s) => s.isDefault) ?? null;
+      setSelectedSignatureId(def?.id ?? null);
+      if (def) setBody(buildBodyWithSignature('', def));
+    }).catch(() => {});
   }, []);
+
+  function handleSignatureChange(sigId: string | null) {
+    const sig = sigId ? signatures.find((s) => s.id === sigId) ?? null : null;
+    setSelectedSignatureId(sigId);
+    setBody((prev) => buildBodyWithSignature(prev, sig));
+    setShowSignatureMenu(false);
+  }
 
   async function handleSend() {
     if (!to.trim() || !fromAccountId) return;
     setSending(true);
     try {
+      const quotedText = quotedContent
+        ? `\n\n${quotedContent.header}\n${quotedContent.body.split('\n').map((l) => `> ${l}`).join('\n')}`
+        : '';
       const data: ComposeData = {
         accountId: fromAccountId,
         to: to.split(',').map((s) => s.trim()).filter(Boolean),
         cc: cc ? cc.split(',').map((s) => s.trim()).filter(Boolean) : [],
         bcc: bcc ? bcc.split(',').map((s) => s.trim()).filter(Boolean) : [],
         subject,
-        bodyText: body,
+        bodyText: body + quotedText,
         replyToMessageId: replyTo?.messageId,
       };
       await sendEmail(data);
@@ -159,13 +209,35 @@ export function ComposeModal() {
           </div>
 
           {/* Body */}
-          <textarea
-            value={body}
-            onChange={(e) => setBody(e.target.value)}
-            placeholder="本文を入力…"
-            rows={12}
-            className="w-full px-4 py-3 text-sm bg-transparent outline-none text-gray-700 dark:text-gray-300 placeholder:text-gray-400 resize-none"
-          />
+          <div className="flex flex-col">
+            <textarea
+              value={body}
+              onChange={(e) => setBody(e.target.value)}
+              placeholder="本文を入力…"
+              rows={quotedContent ? 6 : 12}
+              className="w-full px-4 py-3 text-sm bg-transparent outline-none text-gray-700 dark:text-gray-300 placeholder:text-gray-400 resize-none"
+            />
+            {quotedContent && (
+              <div className="px-4 pb-3">
+                <button
+                  onClick={() => setShowQuoted((v) => !v)}
+                  className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 mb-2 transition-colors"
+                >
+                  <ChevronRight
+                    size={13}
+                    className={cn('transition-transform', showQuoted && 'rotate-90')}
+                  />
+                  {showQuoted ? '元のメッセージを隠す' : '元のメッセージを表示'}
+                </button>
+                {showQuoted && (
+                  <div className="max-h-48 overflow-y-auto border-l-2 border-gray-300 dark:border-gray-600 pl-3">
+                    <p className="text-xs text-gray-400 dark:text-gray-500 mb-2 whitespace-pre-wrap">{quotedContent.header}</p>
+                    <p className="text-xs text-gray-500 dark:text-gray-400 whitespace-pre-wrap leading-relaxed">{quotedContent.body}</p>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
 
           {/* Toolbar */}
           <div className="flex items-center justify-between px-4 py-2.5 border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-750">
@@ -181,6 +253,47 @@ export function ComposeModal() {
               <button className="p-2 rounded hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-500" title="添付ファイル">
                 <Paperclip size={15} />
               </button>
+              {signatures.length > 0 && (
+                <div className="relative">
+                  <button
+                    onClick={() => setShowSignatureMenu((v) => !v)}
+                    className={cn(
+                      'flex items-center gap-1 px-2 py-1.5 rounded text-xs hover:bg-gray-200 dark:hover:bg-gray-700',
+                      selectedSignatureId ? 'text-blue-600 dark:text-blue-400' : 'text-gray-500',
+                    )}
+                    title="署名"
+                  >
+                    <PenLine size={13} />
+                    <span className="hidden sm:inline">{selectedSignatureId ? signatures.find((s) => s.id === selectedSignatureId)?.name : '署名なし'}</span>
+                    <ChevronDown size={11} />
+                  </button>
+                  {showSignatureMenu && (
+                    <div className="absolute bottom-full right-0 mb-1 w-48 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg overflow-hidden z-10">
+                      <button
+                        onClick={() => handleSignatureChange(null)}
+                        className={cn(
+                          'w-full text-left px-3 py-2 text-xs hover:bg-gray-100 dark:hover:bg-gray-700',
+                          !selectedSignatureId ? 'text-blue-600 dark:text-blue-400 font-medium' : 'text-gray-700 dark:text-gray-300',
+                        )}
+                      >
+                        署名なし
+                      </button>
+                      {signatures.map((sig) => (
+                        <button
+                          key={sig.id}
+                          onClick={() => handleSignatureChange(sig.id)}
+                          className={cn(
+                            'w-full text-left px-3 py-2 text-xs hover:bg-gray-100 dark:hover:bg-gray-700',
+                            selectedSignatureId === sig.id ? 'text-blue-600 dark:text-blue-400 font-medium' : 'text-gray-700 dark:text-gray-300',
+                          )}
+                        >
+                          {sig.name}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         </>
