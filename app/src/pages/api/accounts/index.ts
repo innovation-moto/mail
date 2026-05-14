@@ -14,7 +14,20 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       .eq('user_id', user.id)
       .order('created_at');
     if (error) return res.status(500).json({ error: error.message });
-    return res.json(data);
+    // Convert snake_case to camelCase for frontend
+    const accounts = (data ?? []).map((row: Record<string, unknown>) => ({
+      id: row.id,
+      name: row.name,
+      email: row.email,
+      imapHost: row.imap_host,
+      imapPort: row.imap_port,
+      imapSecure: row.imap_secure,
+      smtpHost: row.smtp_host,
+      smtpPort: row.smtp_port,
+      smtpSecure: row.smtp_secure,
+      avatar: row.avatar,
+    }));
+    return res.json(accounts);
   }
 
   if (req.method === 'POST') {
@@ -32,7 +45,18 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       .select('id, name, email, imap_host, imap_port, smtp_host, smtp_port, avatar')
       .single();
     if (error) return res.status(500).json({ error: error.message });
-    return res.json(data);
+    // Convert snake_case to camelCase for frontend
+    const account = data ? {
+      id: data.id,
+      name: data.name,
+      email: data.email,
+      imapHost: data.imap_host,
+      imapPort: data.imap_port,
+      smtpHost: data.smtp_host,
+      smtpPort: data.smtp_port,
+      avatar: data.avatar,
+    } : null;
+    return res.json(account);
   }
 
   res.status(405).end();

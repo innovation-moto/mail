@@ -2,6 +2,11 @@ import { NextApiRequest, NextApiResponse } from 'next';
 import { getAuthUser } from '@/lib/apiAuth';
 import { syncFolderEmails } from '@/lib/imapHelper';
 
+// Increase timeout for IMAP sync (Vercel Hobby: up to 60s)
+export const config = {
+  maxDuration: 60,
+};
+
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') return res.status(405).end();
   const auth = await getAuthUser(req, res);
@@ -30,7 +35,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const lastUid = lastEmail?.uid ?? 0;
 
   try {
-    const newEmails = await syncFolderEmails(account, folder, lastUid, 50);
+    const newEmails = await syncFolderEmails(account, folder, lastUid, 20);
 
     if (newEmails.length > 0) {
       const rows = newEmails.map((e) => ({

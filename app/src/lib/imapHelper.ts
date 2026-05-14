@@ -20,6 +20,9 @@ export function createImapClient(account: AccountRow) {
     auth: { user: account.email, pass: password },
     logger: false,
     tls: { rejectUnauthorized: false },
+    connectionTimeout: 8000, // 8s timeout for Vercel serverless
+    greetingTimeout: 8000,
+    socketTimeout: 8000,
   });
 }
 
@@ -51,6 +54,15 @@ export async function fetchEmailBody(
     lock?.release();
     try { await client.logout(); } catch { /* ignore */ }
   }
+}
+
+function checkHasAttachments(structure: any): boolean {
+  if (!structure) return false;
+  if (structure.disposition?.toLowerCase() === 'attachment') return true;
+  if (Array.isArray(structure.childNodes)) {
+    return structure.childNodes.some((child: any) => checkHasAttachments(child));
+  }
+  return false;
 }
 
 export async function syncFolderEmails(
@@ -90,30 +102,33 @@ export async function syncFolderEmails(
     }
 
     let count = 0;
+    // Use envelope + bodyStructure instead of full source for faster sync
+    // (full body is fetched on demand via fetchEmailBody)
     for await (const msg of client.fetch(
       fetchRange,
-      { uid: true, flags: true, source: true },
+      { uid: true, flags: true, envelope: true, bodyStructure: true, headers: ['message-id', 'content-type'] },
       fetchOpts,
     )) {
-      if (!msg.source || count >= limit) break;
+      if (count >= limit) break;
       if (lastUid > 0 && msg.uid <= lastUid) continue;
       count++;
 
       try {
-        const parsed = await simpleParser(msg.source);
-        const from = parsed.from?.value?.[0] || { address: '', name: '' };
+        const env = msg.envelope;
+        const from = env?.from?.[0] || { address: '', name: '' };
+        const hasAttachments = checkHasAttachments(msg.bodyStructure);
         results.push({
           uid: msg.uid,
-          messageId: parsed.messageId || '',
+          messageId: env?.messageId || '',
           folder,
-          fromAddress: from.address || '',
-          fromName: from.name || '',
-          toAddresses: (parsed.to as any)?.value?.map((a: any) => ({ address: a.address || '', name: a.name || '' })) || [],
-          ccAddresses: (parsed.cc as any)?.value?.map((a: any) => ({ address: a.address || '', name: a.name || '' })) || [],
-          subject: parsed.subject || '',
-          date: (parsed.date || new Date()).toISOString(),
+          fromAddress: (from as any).address || '',
+          fromName: (from as any).name || '',
+          toAddresses: (env?.to as any[])?.map((a: any) => ({ address: a.address || '', name: a.name || '' })) || [],
+          ccAddresses: (env?.cc as any[])?.map((a: any) => ({ address: a.address || '', name: a.name || '' })) || [],
+          subject: env?.subject || '',
+          date: (env?.date || new Date()).toISOString(),
           isRead: msg.flags?.has('\\Seen') ?? false,
-          hasAttachments: (parsed.attachments?.length || 0) > 0,
+          hasAttachments,
         });
       } catch { /* skip */ }
     }
