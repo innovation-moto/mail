@@ -1,118 +1,251 @@
-import React from 'react';
+import React, { useRef } from 'react';
 import {
   View,
   Text,
   TouchableOpacity,
   StyleSheet,
+  Animated,
+  PanResponder,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import type { Email } from '@/shared/types';
+import type { Email } from '../shared/types';
 
 function formatDate(timestamp: number): string {
   const date = new Date(timestamp);
   const now = new Date();
-  const diffMs = now.getTime() - date.getTime();
-  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
 
-  if (diffDays === 0) {
-    // Same day: show time
-    const hours = date.getHours();
-    const minutes = date.getMinutes().toString().padStart(2, '0');
-    const ampm = hours >= 12 ? 'PM' : 'AM';
-    const h = hours % 12 || 12;
-    return `${h}:${minutes} ${ampm}`;
-  } else if (diffDays === 1) {
-    return '昨日';
-  } else if (diffDays < 7) {
+  // Same calendar day
+  const sameDay =
+    date.getFullYear() === now.getFullYear() &&
+    date.getMonth() === now.getMonth() &&
+    date.getDate() === now.getDate();
+
+  if (sameDay) {
+    return date.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit', hour12: false });
+  }
+
+  const yesterday = new Date(now);
+  yesterday.setDate(now.getDate() - 1);
+  const isYesterday =
+    date.getFullYear() === yesterday.getFullYear() &&
+    date.getMonth() === yesterday.getMonth() &&
+    date.getDate() === yesterday.getDate();
+
+  if (isYesterday) return '昨日';
+
+  const diffDays = Math.floor((now.getTime() - date.getTime()) / (1000 * 60 * 60 * 24));
+  if (diffDays < 7) {
     const days = ['日', '月', '火', '水', '木', '金', '土'];
     return days[date.getDay()];
-  } else {
-    const month = (date.getMonth() + 1).toString().padStart(2, '0');
-    const day = date.getDate().toString().padStart(2, '0');
-    return `${month}/${day}`;
   }
+
+  if (date.getFullYear() === now.getFullYear()) {
+    return `${date.getMonth() + 1}/${date.getDate()}`;
+  }
+
+  return `${date.getFullYear()}/${(date.getMonth() + 1).toString().padStart(2, '0')}/${date.getDate().toString().padStart(2, '0')}`;
 }
 
 function getPreviewText(email: Email): string {
   const text = email.bodyText || email.bodyHtml.replace(/<[^>]+>/g, ' ');
-  return text.replace(/\s+/g, ' ').trim().slice(0, 100);
+  return text.replace(/\s+/g, ' ').trim().slice(0, 120);
+}
+
+function getInitial(name: string): string {
+  return (name || '?').charAt(0).toUpperCase();
 }
 
 interface Props {
   email: Email;
   onPress: () => void;
+  onStar?: () => void;
+  onDelete?: () => void;
 }
 
-export default function EmailItem({ email, onPress }: Props) {
+const SWIPE_THRESHOLD = 60;
+const ACTION_WIDTH = 72;
+
+export default function EmailItem({ email, onPress, onStar, onDelete }: Props) {
   const preview = getPreviewText(email);
   const senderName = email.from.name || email.from.address;
+  const translateX = useRef(new Animated.Value(0)).current;
+  const swipeOpen = useRef(false);
+
+  const panResponder = useRef(
+    PanResponder.create({
+      onMoveShouldSetPanResponder: (_, gestureState) =>
+        Math.abs(gestureState.dx) > 5 && Math.abs(gestureState.dy) < 15,
+      onPanResponderMove: (_, gestureState) => {
+        if (gestureState.dx < 0) {
+          translateX.setValue(Math.max(gestureState.dx, -ACTION_WIDTH * 2));
+        } else if (swipeOpen.current) {
+          translateX.setValue(Math.min(0, -ACTION_WIDTH * 2 + gestureState.dx));
+        }
+      },
+      onPanResponderRelease: (_, gestureState) => {
+        if (!swipeOpen.current && gestureState.dx < -SWIPE_THRESHOLD) {
+          // Open actions
+          Animated.spring(translateX, {
+            toValue: -ACTION_WIDTH * 2,
+            useNativeDriver: true,
+            tension: 60,
+            friction: 8,
+          }).start();
+          swipeOpen.current = true;
+        } else {
+          // Close
+          Animated.spring(translateX, {
+            toValue: 0,
+            useNativeDriver: true,
+            tension: 60,
+            friction: 8,
+          }).start();
+          swipeOpen.current = false;
+        }
+      },
+    }),
+  ).current;
+
+  const closeSwipe = () => {
+    Animated.spring(translateX, {
+      toValue: 0,
+      useNativeDriver: true,
+      tension: 60,
+      friction: 8,
+    }).start();
+    swipeOpen.current = false;
+  };
 
   return (
-    <TouchableOpacity
-      style={styles.container}
-      onPress={onPress}
-      activeOpacity={0.7}
-    >
-      {/* Unread dot */}
-      <View style={styles.dotColumn}>
-        {!email.isRead && <View style={styles.unreadDot} />}
-      </View>
-
-      {/* Avatar */}
-      <View style={[styles.avatar, email.isRead && styles.avatarRead]}>
-        <Text style={styles.avatarText}>
-          {senderName.charAt(0).toUpperCase()}
-        </Text>
-      </View>
-
-      {/* Content */}
-      <View style={styles.content}>
-        <View style={styles.topRow}>
-          <Text
-            style={[styles.senderName, !email.isRead && styles.senderNameUnread]}
-            numberOfLines={1}
-          >
-            {senderName}
-          </Text>
-          <View style={styles.topRight}>
-            {email.isStarred && (
-              <Ionicons name="star" size={13} color="#FF9500" style={styles.starIcon} />
-            )}
-            {email.hasAttachments && (
-              <Ionicons name="attach" size={13} color="#8E8E93" style={styles.attachIcon} />
-            )}
-            <Text style={styles.date}>{formatDate(email.date)}</Text>
-            <Ionicons name="chevron-forward" size={14} color="#C7C7CC" />
-          </View>
-        </View>
-
-        <Text
-          style={[styles.subject, !email.isRead && styles.subjectUnread]}
-          numberOfLines={1}
+    <View style={styles.wrapper}>
+      {/* Swipe action buttons (revealed from right) */}
+      <View style={styles.actions}>
+        <TouchableOpacity
+          style={[styles.actionBtn, styles.starBtn]}
+          onPress={() => {
+            closeSwipe();
+            onStar?.();
+          }}
         >
-          {email.subject || '（件名なし）'}
-        </Text>
-
-        <Text style={styles.preview} numberOfLines={1}>
-          {preview || '本文なし'}
-        </Text>
+          <Ionicons
+            name={email.isStarred ? 'star' : 'star-outline'}
+            size={22}
+            color="#FFFFFF"
+          />
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.actionBtn, styles.deleteBtn]}
+          onPress={() => {
+            closeSwipe();
+            onDelete?.();
+          }}
+        >
+          <Ionicons name="trash-outline" size={22} color="#FFFFFF" />
+        </TouchableOpacity>
       </View>
-    </TouchableOpacity>
+
+      {/* Main row */}
+      <Animated.View style={[styles.row, { transform: [{ translateX }] }]} {...panResponder.panHandlers}>
+        <TouchableOpacity
+          style={styles.touchable}
+          onPress={() => {
+            if (swipeOpen.current) {
+              closeSwipe();
+            } else {
+              onPress();
+            }
+          }}
+          activeOpacity={0.7}
+        >
+          {/* Unread dot */}
+          <View style={styles.dotColumn}>
+            {!email.isRead && <View style={styles.unreadDot} />}
+          </View>
+
+          {/* Avatar */}
+          <View style={[styles.avatar, email.isRead && styles.avatarRead]}>
+            <Text style={styles.avatarText}>{getInitial(senderName)}</Text>
+          </View>
+
+          {/* Content */}
+          <View style={styles.content}>
+            {/* Top row: sender + meta */}
+            <View style={styles.topRow}>
+              <Text
+                style={[styles.senderName, !email.isRead && styles.senderNameUnread]}
+                numberOfLines={1}
+              >
+                {senderName}
+              </Text>
+              <View style={styles.metaRow}>
+                {email.isStarred && (
+                  <Ionicons name="star" size={12} color="#FF9500" />
+                )}
+                {email.hasAttachments && (
+                  <Ionicons name="attach" size={13} color="#8E8E93" />
+                )}
+                <Text style={styles.date}>{formatDate(email.date)}</Text>
+                <Ionicons name="chevron-forward" size={13} color="#C7C7CC" />
+              </View>
+            </View>
+
+            {/* Subject */}
+            <Text
+              style={[styles.subject, !email.isRead && styles.subjectUnread]}
+              numberOfLines={1}
+            >
+              {email.subject || '（件名なし）'}
+            </Text>
+
+            {/* Preview */}
+            <Text style={styles.preview} numberOfLines={1}>
+              {preview || '本文なし'}
+            </Text>
+          </View>
+        </TouchableOpacity>
+      </Animated.View>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
+  wrapper: {
+    overflow: 'hidden',
+    backgroundColor: '#FFFFFF',
+  },
+  actions: {
+    position: 'absolute',
+    right: 0,
+    top: 0,
+    bottom: 0,
+    flexDirection: 'row',
+    width: 144,
+  },
+  actionBtn: {
+    width: 72,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  starBtn: {
+    backgroundColor: '#FF9500',
+  },
+  deleteBtn: {
+    backgroundColor: '#FF3B30',
+  },
+  row: {
+    backgroundColor: '#FFFFFF',
+  },
+  touchable: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingLeft: 4,
     paddingRight: 12,
-    paddingVertical: 12,
-    backgroundColor: '#FFFFFF',
+    paddingVertical: 11,
   },
   dotColumn: {
-    width: 20,
+    width: 18,
     alignItems: 'center',
+    justifyContent: 'center',
   },
   unreadDot: {
     width: 8,
@@ -128,6 +261,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 10,
+    marginLeft: 2,
   },
   avatarRead: {
     backgroundColor: '#C7C7CC',
@@ -145,45 +279,40 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 2,
+    marginBottom: 1,
   },
   senderName: {
     flex: 1,
     fontSize: 15,
     color: '#000000',
     fontWeight: '400',
-    marginRight: 8,
+    marginRight: 6,
   },
   senderNameUnread: {
     fontWeight: '700',
   },
-  topRight: {
+  metaRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 2,
-  },
-  starIcon: {
-    marginRight: 2,
-  },
-  attachIcon: {
-    marginRight: 2,
+    gap: 3,
   },
   date: {
     fontSize: 12,
     color: '#8E8E93',
-    marginRight: 2,
   },
   subject: {
     fontSize: 14,
-    color: '#000000',
+    color: '#3C3C43',
     fontWeight: '400',
+    lineHeight: 18,
   },
   subjectUnread: {
     fontWeight: '600',
+    color: '#000000',
   },
   preview: {
     fontSize: 13,
-    color: '#666666',
+    color: '#8E8E93',
     lineHeight: 17,
   },
 });
