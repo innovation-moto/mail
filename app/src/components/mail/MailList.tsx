@@ -7,6 +7,33 @@ import { Email } from '@/types/shared';
 import { cn, formatEmailDate, truncate, getInitials, getAvatarColor, PRIORITY_COLORS } from '@/lib/utils';
 import { api } from '@/lib/ipc';
 
+function SenderAvatar({ email, name }: { email: string; name?: string }) {
+  const domain = email.split('@')[1] ?? '';
+  const faviconUrl = `https://www.google.com/s2/favicons?domain=${domain}&sz=64`;
+  const [useFavicon, setUseFavicon] = useState(true);
+
+  if (useFavicon && domain) {
+    return (
+      <div className="w-8 h-8 rounded-full flex-shrink-0 mt-0.5 overflow-hidden bg-gray-100 dark:bg-gray-700 flex items-center justify-center">
+        <img
+          src={faviconUrl}
+          alt={name || email}
+          className="w-5 h-5 object-contain"
+          onError={() => setUseFavicon(false)}
+        />
+      </div>
+    );
+  }
+  return (
+    <div className={cn(
+      'w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-bold flex-shrink-0 mt-0.5',
+      getAvatarColor(email),
+    )}>
+      {getInitials(name, email)}
+    </div>
+  );
+}
+
 export function MailList() {
   const { selectedAccountId } = useAccountStore();
   const {
@@ -196,12 +223,7 @@ function EmailItem({
     >
       <div className="flex items-start gap-2.5">
         {/* Avatar */}
-        <div className={cn(
-          'w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-bold flex-shrink-0 mt-0.5',
-          getAvatarColor(email.from.address),
-        )}>
-          {getInitials(email.from.name, email.from.address)}
-        </div>
+        <SenderAvatar email={email.from.address} name={email.from.name} />
 
         <div className="min-w-0 flex-1">
           {/* From + date */}
