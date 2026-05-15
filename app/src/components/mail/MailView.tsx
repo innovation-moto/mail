@@ -472,11 +472,26 @@ function EmailHtmlView({ html }: { html: string }) {
 <html>
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="color-scheme" content="light only">
 <style>
   :root { color-scheme: light; }
   html { background: #ffffff; }
-  body { background: #ffffff; margin: 8px; font-family: -apple-system, sans-serif; font-size: 14px; line-height: 1.6; color: #333; }
+  body {
+    background: #ffffff;
+    margin: 8px;
+    font-family: -apple-system, sans-serif;
+    font-size: 14px;
+    line-height: 1.6;
+    color: #333;
+    overflow-x: hidden;
+  }
+  /* HTMLメールの固定幅テーブル・画像をレスポンシブに */
+  * { box-sizing: border-box; max-width: 100%; }
+  table { width: 100% !important; table-layout: fixed; }
+  td, th { word-break: break-word; }
+  img { height: auto !important; }
+  pre, code { white-space: pre-wrap; word-break: break-all; }
 </style>
 </head>
 <body>${html}</body>
