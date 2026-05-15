@@ -213,6 +213,23 @@ export async function markDeleted(id: string): Promise<void> {
   );
 }
 
+/** フォルダごとの未読数を一括取得 */
+export async function getUnreadCountsByFolder(
+  accountId: string,
+): Promise<Record<string, number>> {
+  const database = getDb();
+  const rows = await database.getAllAsync<{ folder: string; cnt: number }>(
+    `SELECT folder, COUNT(*) as cnt
+     FROM emails
+     WHERE account_id = ? AND is_read = 0 AND is_deleted = 0
+     GROUP BY folder`,
+    [accountId],
+  );
+  const result: Record<string, number> = {};
+  for (const row of rows) result[row.folder] = row.cnt;
+  return result;
+}
+
 export async function getMaxUid(accountId: string, folder: string): Promise<number> {
   const database = getDb();
   const row = await database.getFirstAsync<{ max_uid: number | null }>(

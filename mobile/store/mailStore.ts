@@ -8,12 +8,14 @@ import {
   markStar,
   markDeleted,
   getMaxUid,
+  getUnreadCountsByFolder,
 } from '../lib/db';
 import { useAccountStore } from './accountStore';
 
 interface MailStore {
   emails: Email[];
   folders: Folder[];
+  folderUnreadCounts: Record<string, number>;
   selectedEmailId: string | null;
   selectedFolder: string;
   loading: boolean;
@@ -28,6 +30,7 @@ interface MailStore {
   loadFolders(accountId: string): Promise<void>;
   loadEmails(accountId: string, folder: string): Promise<void>;
   syncEmails(accountId: string, folder: string): Promise<void>;
+  refreshUnreadCounts(accountId: string): Promise<void>;
 
   markRead(id: string, uid: number, folder: string): Promise<void>;
   starEmail(id: string, uid: number, folder: string, isStarred: boolean): Promise<void>;
@@ -37,6 +40,7 @@ interface MailStore {
 export const useMailStore = create<MailStore>((set, get) => ({
   emails: [],
   folders: [],
+  folderUnreadCounts: {},
   selectedEmailId: null,
   selectedFolder: 'INBOX',
   loading: false,
@@ -55,6 +59,13 @@ export const useMailStore = create<MailStore>((set, get) => ({
   getSelectedEmail(): Email | null {
     const { emails, selectedEmailId } = get();
     return emails.find((e) => e.id === selectedEmailId) ?? null;
+  },
+
+  async refreshUnreadCounts(accountId: string) {
+    try {
+      const counts = await getUnreadCountsByFolder(accountId);
+      set({ folderUnreadCounts: counts });
+    } catch {}
   },
 
   async loadFolders(accountId: string) {
@@ -109,6 +120,10 @@ export const useMailStore = create<MailStore>((set, get) => ({
       // Reload from DB
       const allEmails = await listEmails(accountId, folder);
       set({ emails: allEmails });
+
+      // フォルダ別未読数を更新
+      const counts = await getUnreadCountsByFolder(accountId);
+      set({ folderUnreadCounts: counts });
     } catch (err) {
       set({ error: (err as Error).message });
     } finally {
@@ -127,6 +142,10 @@ export const useMailStore = create<MailStore>((set, get) => ({
     }));
 
     await markRead(id, true);
+
+    // 未読バッジを即時更新
+    const counts = await getUnreadCountsByFolder(account.id);
+    set({ folderUnreadCounts: counts });
 
     const password = await accountStore.getPassword(account.id);
     if (password) {

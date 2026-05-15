@@ -103,8 +103,8 @@ export default function InboxScreen() {
 
   const { accounts, selectedAccountId, selectAccount, initialized } = useAccountStore();
   const {
-    emails, folders, selectedFolder, loading, syncing, error,
-    loadEmails, syncEmails, loadFolders, setFolder,
+    emails, folders, folderUnreadCounts, selectedFolder, loading, syncing, error,
+    loadEmails, syncEmails, loadFolders, setFolder, refreshUnreadCounts,
     markRead,
   } = useMailStore();
 
@@ -148,6 +148,7 @@ export default function InboxScreen() {
     loadFolders(selectedAccountId);
     loadEmails(selectedAccountId, selectedFolder);
     syncEmails(selectedAccountId, selectedFolder);
+    refreshUnreadCounts(selectedAccountId);
   }, [initialized, selectedAccountId, selectedFolder]);
 
   const openDrawer = () => {
@@ -218,6 +219,7 @@ export default function InboxScreen() {
                   selectedAccountId={selectedAccountId}
                   selectedFolder={selectedFolder}
                   folders={folders}
+                  folderUnreadCounts={folderUnreadCounts}
                   syncing={syncing}
                   onAccountSelect={handleAccountSelect}
                   onFolderSelect={handleFolderSelect}
@@ -337,13 +339,14 @@ export default function InboxScreen() {
 
 // ─── ドロワー ───────────────────────────────────────────
 function DrawerContent({
-  accounts, selectedAccountId, selectedFolder, folders, syncing,
+  accounts, selectedAccountId, selectedFolder, folders, folderUnreadCounts, syncing,
   onAccountSelect, onFolderSelect, onSync, onSettings, onSetup, insets,
 }: {
   accounts: any[];
   selectedAccountId: string | null;
   selectedFolder: string;
   folders: Folder[];
+  folderUnreadCounts: Record<string, number>;
   syncing: boolean;
   onAccountSelect: (id: string) => void;
   onFolderSelect: (path: string) => void;
@@ -426,6 +429,8 @@ function DrawerContent({
         {displayFolders.map(f => {
           const isActive = f.path === selectedFolder;
           const color = FOLDER_COLORS[f.colorKey] ?? FOLDER_COLORS.default;
+          // ローカルDBの未読数を優先、なければサーバーから取得した値
+          const unread = folderUnreadCounts[f.path] ?? f.unreadCount ?? 0;
           return (
             <TouchableOpacity
               key={f.path}
@@ -443,13 +448,10 @@ function DrawerContent({
               <Text style={[d.folderLabel, isActive && d.folderLabelActive]} numberOfLines={1}>
                 {f.label}
               </Text>
-              {(f.unreadCount ?? 0) > 0 && !isActive && (
-                <View style={d.badge}>
-                  <Text style={d.badgeText}>{f.unreadCount! > 99 ? '99+' : f.unreadCount}</Text>
+              {unread > 0 && (
+                <View style={[d.badge, isActive && d.badgeActive]}>
+                  <Text style={[d.badgeText, isActive && d.badgeTextActive]}>{unread > 99 ? '99+' : unread}</Text>
                 </View>
-              )}
-              {isActive && (
-                <Ionicons name="checkmark" size={15} color="#007AFF" />
               )}
             </TouchableOpacity>
           );
@@ -591,5 +593,7 @@ const d = StyleSheet.create({
     paddingHorizontal: 6, paddingVertical: 2, marginRight: 4,
     minWidth: 20, alignItems: 'center',
   },
+  badgeActive: { backgroundColor: 'rgba(0,122,255,0.15)' },
   badgeText: { color: '#fff', fontSize: 11, fontWeight: '700' },
+  badgeTextActive: { color: '#007AFF' },
 });
