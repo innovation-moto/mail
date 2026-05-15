@@ -1,64 +1,8 @@
-import React, { useState } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Image } from 'react-native';
+import React from 'react';
+import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import type { Email } from '@/shared/types';
-
-// PCと同じアルゴリズム（Tailwindカラーをhexに変換）
-const AVATAR_COLORS = [
-  '#ef4444','#f97316','#f59e0b','#eab308',
-  '#84cc16','#22c55e','#10b981','#14b8a6',
-  '#06b6d4','#0ea5e9','#3b82f6','#6366f1',
-  '#8b5cf6','#a855f7','#d946ef','#ec4899',
-];
-
-function getAvatarColor(email: string): string {
-  let hash = 0;
-  for (let i = 0; i < email.length; i++) hash = email.charCodeAt(i) + ((hash << 5) - hash);
-  return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length];
-}
-
-function getInitials(name: string, email: string): string {
-  if (name) {
-    const parts = name.trim().split(/\s+/);
-    if (parts.length >= 2) return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
-    return name[0].toUpperCase();
-  }
-  return email[0].toUpperCase();
-}
-
-// Google Favicon API でドメインロゴを取得
-function getFaviconUrl(emailAddress: string): string {
-  const domain = emailAddress.split('@')[1] ?? '';
-  return `https://www.google.com/s2/favicons?domain=${domain}&sz=64`;
-}
-
-function SenderAvatar({ fromEmail, fromName }: { fromEmail: string; fromName: string }) {
-  const [faviconLoaded, setFaviconLoaded] = useState(false);
-  const [faviconError, setFaviconError] = useState(false);
-  const faviconUrl = getFaviconUrl(fromEmail);
-  const initials = getInitials(fromName, fromEmail);
-  const bgColor = getAvatarColor(fromEmail);
-
-  return (
-    <View style={av.wrap}>
-      {/* ファビコン（読込成功時に表示） */}
-      {!faviconError && (
-        <Image
-          source={{ uri: faviconUrl }}
-          style={[av.favicon, !faviconLoaded && av.hidden]}
-          onLoad={() => setFaviconLoaded(true)}
-          onError={() => setFaviconError(true)}
-        />
-      )}
-      {/* イニシャル（ファビコン失敗 or 読込中） */}
-      {(!faviconLoaded || faviconError) && (
-        <View style={[av.initials, { backgroundColor: bgColor }]}>
-          <Text style={av.initialsText}>{initials}</Text>
-        </View>
-      )}
-    </View>
-  );
-}
+import SenderAvatar from './SenderAvatar';
 
 function formatDate(ts: number): string {
   const d = new Date(ts);
@@ -99,7 +43,9 @@ export default function EmailItem({ email, onPress }: Props) {
       </View>
 
       {/* アバター */}
-      <SenderAvatar fromEmail={email.from.address} fromName={email.from.name || ''} />
+      <View style={av.wrap}>
+        <SenderAvatar fromEmail={email.from.address} fromName={email.from.name || ''} size={36} />
+      </View>
 
       {/* コンテンツ */}
       <View style={styles.body}>
@@ -138,11 +84,7 @@ export default function EmailItem({ email, onPress }: Props) {
 }
 
 const av = StyleSheet.create({
-  wrap: { width: 36, height: 36, borderRadius: 18, marginRight: 10, flexShrink: 0, marginTop: 1 },
-  favicon: { width: 36, height: 36, borderRadius: 18 },
-  hidden: { position: 'absolute', opacity: 0 },
-  initials: { width: 36, height: 36, borderRadius: 18, justifyContent: 'center', alignItems: 'center' },
-  initialsText: { color: '#fff', fontSize: 14, fontWeight: '700' },
+  wrap: { marginRight: 10, flexShrink: 0, marginTop: 1 },
 });
 
 const styles = StyleSheet.create({

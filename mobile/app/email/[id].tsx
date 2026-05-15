@@ -12,6 +12,7 @@ import { useMailStore } from '../../store/mailStore';
 import { useAccountStore } from '../../store/accountStore';
 import { getEmail } from '../../lib/db';
 import { mailApi } from '../../lib/api';
+import SenderAvatar from '../../components/SenderAvatar';
 import type { AiSummarizeResult, AiTone, CalendarEvent, Email } from '@/shared/types';
 
 function formatFullDate(ts: number): string {
@@ -237,8 +238,8 @@ export default function EmailDetailScreen() {
 
       {/* ─── 送信者カード ─── */}
       <TouchableOpacity style={s.senderCard} onPress={() => setHeaderExpanded(v => !v)} activeOpacity={0.7}>
-        <View style={s.senderAvatar}>
-          <Text style={s.senderAvatarText}>{senderName.charAt(0).toUpperCase()}</Text>
+        <View style={s.senderAvatarWrap}>
+          <SenderAvatar fromEmail={email.from.address} fromName={email.from.name || ''} size={40} />
         </View>
         <View style={s.senderInfo}>
           <Text style={s.senderName}>{senderName}</Text>
@@ -547,12 +548,9 @@ const s = StyleSheet.create({
     paddingHorizontal: 16, paddingVertical: 12,
     borderBottomWidth: 0.5, borderBottomColor: '#F0F0F0',
   },
-  senderAvatar: {
-    width: 40, height: 40, borderRadius: 20,
-    backgroundColor: '#007AFF', justifyContent: 'center', alignItems: 'center',
+  senderAvatarWrap: {
     marginRight: 10, flexShrink: 0,
   },
-  senderAvatarText: { color: '#fff', fontSize: 17, fontWeight: '700' },
   senderInfo: { flex: 1 },
   senderName: { fontSize: 15, fontWeight: '600', color: '#000', marginBottom: 2 },
   senderSub: { fontSize: 13, color: '#8E8E93', marginTop: 1 },
