@@ -9,7 +9,7 @@
     "dev:next": "cd app && node_modules/.bin/next dev -p 3000",
     "dev:electron": "wait-on http://localhost:3000 && tsc -p tsconfig.electron.json && cross-env NODE_ENV=development electron .",
     "build": "npm run build:next && npm run build:electron",
-    "build:next": "cd app && node_modules/.bin/next build",
+    "build:next": "cd app && BUILD_FOR_ELECTRON=true node_modules/.bin/next build",
     "build:electron": "tsc -p tsconfig.electron.json",
     "package": "npm run build && electron-builder",
     "postinstall": "electron-builder install-app-deps"
