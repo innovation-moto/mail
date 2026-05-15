@@ -207,4 +207,96 @@ export function registerMailHandlers(win: BrowserWindow): void {
       shell.openExternal(url);
     }
   });
+
+  // ファビコン取得（メインプロセス経由でCSP制限を回避）
+  const faviconCache = new Map<string, string | null>();
+
+  /** サブドメインを除いたルートドメインを返す（例: mail.foo.co.jp → foo.co.jp） */
+  function getRootDomain(domain: string): string {
+    const parts = domain.split('.');
+    // co.jp / ne.jp / or.jp などの 2段階TLDを考慮
+    if (parts.length > 2 && parts[parts.length - 2].length <= 3) {
+      return parts.slice(-3).join('.');
+    }
+    return parts.slice(-2).join('.');
+  }
+
+  async function fetchFavicon(domain: string): Promise<string | null> {
+    const sources = [
+      // Clearbit: 企業ロゴ専用、高品質（404を返すので安全）
+      `https://logo.clearbit.com/${domain}`,
+      // Google gstatic Favicon API v2: アイコンなし → 404（globe問題なし）
+      `https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://${domain}&size=64`,
+      // DuckDuckGo
+      `https://icons.duckduckgo.com/ip3/${domain}.ico`,
+      // 直接取得
+      `https://${domain}/favicon.ico`,
+    ];
+
+    for (const url of sources) {
+      try {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 5000);
+        const res = await fetch(url, { signal: controller.signal });
+        clearTimeout(timer);
+        if (!res.ok) continue;
+        const contentType = res.headers.get('content-type') || '';
+        // HTMLエラーページを除外
+        if (contentType.startsWith('text/')) continue;
+        const buf = Buffer.from(await res.arrayBuffer());
+        if (buf.length < 50) continue;
+        const mimeType = contentType.split(';')[0] || 'image/x-icon';
+        return `data:${mimeType};base64,${buf.toString('base64')}`;
+      } catch {
+        // 次のソースを試す
+      }
+    }
+    return null;
+  }
+
+  /**
+   * 送信者名からドメイン候補を生成する
+   * 例: "Luxury Card" → ["luxurycard.co.jp", "luxurycard.com", "luxury-card.co.jp"]
+   */
+  function guessDomainsFromName(name: string): string[] {
+    const base = name.toLowerCase().replace(/[^a-z0-9぀-鿿]+/g, '');
+    if (!base || base.length < 2) return [];
+    const baseHyphen = name.toLowerCase().replace(/[^a-z0-9぀-鿿]+/g, '-').replace(/^-|-$/g, '');
+    const tlds = ['.co.jp', '.com', '.jp', '.net'];
+    const candidates: string[] = [];
+    for (const tld of tlds) {
+      candidates.push(`${base}${tld}`);
+      if (baseHyphen !== base) candidates.push(`${baseHyphen}${tld}`);
+    }
+    return candidates;
+  }
+
+  ipcMain.handle('favicon:get', async (_e, domain: string, senderName?: string) => {
+    if (!domain) return null;
+    const cacheKey = `${domain}:${senderName ?? ''}`;
+    if (faviconCache.has(cacheKey)) return faviconCache.get(cacheKey) ?? null;
+
+    // まず元のドメインで試す
+    let result = await fetchFavicon(domain);
+
+    // 失敗した場合、ルートドメインで再試行（サブドメイン対策）
+    if (!result) {
+      const root = getRootDomain(domain);
+      if (root !== domain) {
+        result = await fetchFavicon(root);
+      }
+    }
+
+    // まだ失敗している場合、送信者名からドメインを推測して試す
+    if (!result && senderName) {
+      for (const guessed of guessDomainsFromName(senderName)) {
+        if (guessed === domain || guessed === getRootDomain(domain)) continue;
+        result = await fetchFavicon(guessed);
+        if (result) break;
+      }
+    }
+
+    faviconCache.set(cacheKey, result);
+    return result;
+  });
 }

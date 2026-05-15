@@ -73,6 +73,9 @@ const api = {
     return () => ipcRenderer.off(channel, handler);
   },
   openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url),
+  favicon: {
+    get: (domain: string, senderName?: string) => ipcRenderer.invoke('favicon:get', domain, senderName),
+  },
 };
 
 contextBridge.exposeInMainWorld('electronAPI', api);

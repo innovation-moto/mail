@@ -7,27 +7,37 @@ import { Email } from '@/types/shared';
 import { cn, formatEmailDate, truncate, getInitials, getAvatarColor, PRIORITY_COLORS } from '@/lib/utils';
 import { api } from '@/lib/ipc';
 
-const FAVICON_SOURCES = (domain: string) => [
-  `https://www.google.com/s2/favicons?domain=${domain}&sz=64`,
-  `https://icons.duckduckgo.com/ip3/${domain}.ico`,
-  `https://${domain}/favicon.ico`,
-];
+// ドメインごとのファビコンキャッシュ（レンダラー側メモリキャッシュ）
+const faviconCache = new Map<string, string | null>();
 
 function SenderAvatar({ email, name }: { email: string; name?: string }) {
   const domain = email.split('@')[1] ?? '';
-  const [srcIndex, setSrcIndex] = useState(0);
-  const sources = FAVICON_SOURCES(domain);
+  const [faviconUrl, setFaviconUrl] = useState<string | null>(
+    faviconCache.has(domain) ? faviconCache.get(domain)! : null,
+  );
+  const [resolved, setResolved] = useState(faviconCache.has(domain));
 
-  const handleError = () => setSrcIndex((i) => i + 1);
+  useEffect(() => {
+    if (!domain || resolved) return;
+    const api = (window as unknown as { electronAPI?: { favicon?: { get: (d: string, n?: string) => Promise<string | null> } } }).electronAPI;
+    if (!api?.favicon) { setResolved(true); return; }
+    api.favicon.get(domain, name).then((url) => {
+      faviconCache.set(domain, url ?? null);
+      setFaviconUrl(url ?? null);
+      setResolved(true);
+    }).catch(() => {
+      faviconCache.set(domain, null);
+      setResolved(true);
+    });
+  }, [domain, resolved]);
 
-  if (domain && srcIndex < sources.length) {
+  if (faviconUrl) {
     return (
       <div className="w-8 h-8 rounded-full flex-shrink-0 mt-0.5 overflow-hidden bg-gray-100 dark:bg-gray-700 flex items-center justify-center">
         <img
-          src={sources[srcIndex]}
+          src={faviconUrl}
           alt={name || email}
-          className="w-5 h-5 object-contain"
-          onError={handleError}
+          className="w-full h-full object-cover"
         />
       </div>
     );
@@ -37,7 +47,7 @@ function SenderAvatar({ email, name }: { email: string; name?: string }) {
       'w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-bold flex-shrink-0 mt-0.5',
       getAvatarColor(email),
     )}>
-      {getInitials(name, email)}
+      {getInitials(name ?? '', email)}
     </div>
   );
 }
