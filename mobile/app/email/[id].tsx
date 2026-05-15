@@ -28,7 +28,7 @@ export default function EmailDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { markRead, starEmail, deleteEmail, selectedFolder } = useMailStore();
+  const { markRead, starEmail, deleteEmail, selectedFolder, setSenderFilter } = useMailStore();
   const { openAiKey } = useAccountStore();
 
   const [email, setEmail] = useState<Email | null>(null);
@@ -214,7 +214,7 @@ export default function EmailDetailScreen() {
           <View style={s.headerPill}>
             <TouchableOpacity style={s.glassBtn} onPress={handleStar}>
               <Ionicons
-                name={email.isStarred ? 'bookmark' : 'bookmark-outline'}
+                name={email.isStarred ? 'star' : 'star-outline'}
                 size={20}
                 color={email.isStarred ? '#FF9500' : '#3C3C43'}
               />
@@ -224,8 +224,14 @@ export default function EmailDetailScreen() {
               <Ionicons name="flash" size={20} color={openAiKey ? '#007AFF' : '#C7C7CC'} />
             </TouchableOpacity>
             <View style={s.glassDivider} />
-            <TouchableOpacity style={s.glassBtn}>
-              <Ionicons name="person-add-outline" size={20} color="#3C3C43" />
+            <TouchableOpacity
+              style={s.glassBtn}
+              onPress={() => {
+                setSenderFilter(email.from.address);
+                router.back();
+              }}
+            >
+              <Ionicons name="funnel-outline" size={20} color="#3C3C43" />
             </TouchableOpacity>
           </View>
         </View>

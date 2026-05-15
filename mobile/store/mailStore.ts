@@ -18,6 +18,7 @@ interface MailStore {
   folderUnreadCounts: Record<string, number>;
   selectedEmailId: string | null;
   selectedFolder: string;
+  senderFilter: string | null;
   loading: boolean;
   syncing: boolean;
   foldersLoading: boolean;
@@ -26,6 +27,7 @@ interface MailStore {
   setFolder(folder: string): void;
   selectEmail(id: string | null): void;
   getSelectedEmail(): Email | null;
+  setSenderFilter(addr: string | null): void;
 
   loadFolders(accountId: string): Promise<void>;
   loadEmails(accountId: string, folder: string): Promise<void>;
@@ -43,13 +45,18 @@ export const useMailStore = create<MailStore>((set, get) => ({
   folderUnreadCounts: {},
   selectedEmailId: null,
   selectedFolder: 'INBOX',
+  senderFilter: null,
   loading: false,
   syncing: false,
   foldersLoading: false,
   error: null,
 
   setFolder(folder: string) {
-    set({ selectedFolder: folder, selectedEmailId: null, emails: [] });
+    set({ selectedFolder: folder, selectedEmailId: null, emails: [], senderFilter: null });
+  },
+
+  setSenderFilter(addr: string | null) {
+    set({ senderFilter: addr });
   },
 
   selectEmail(id: string | null) {
