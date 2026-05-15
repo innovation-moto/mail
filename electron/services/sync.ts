@@ -21,7 +21,7 @@ let isSyncing = false;
 const folderCache: Record<string, { folders: string[]; fetchedAt: number }> = {};
 const FOLDER_CACHE_TTL = 10 * 60 * 1000; // 10分
 
-const SKIP_FOLDERS = /Trash|ゴミ箱|Deleted|Spam|Junk|迷惑|Draft|下書き|Sent|送信済み|Sent Items|Outbox/i;
+const SKIP_FOLDERS = /Trash|ゴミ箱|Deleted|Spam|Junk|迷惑|Draft|下書き|Outbox/i;
 
 async function getFoldersToSync(account: any, password: string): Promise<string[]> {
   const now = Date.now();
