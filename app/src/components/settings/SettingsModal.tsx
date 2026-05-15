@@ -80,16 +80,21 @@ function AccountsTab() {
   const { openAccountSetup } = useUIStore();
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingName, setEditingName] = useState('');
+  const [editingPassword, setEditingPassword] = useState('');
 
   function startEdit(id: string, currentName: string) {
     setEditingId(id);
     setEditingName(currentName);
+    setEditingPassword('');
   }
 
   async function saveEdit(id: string) {
     if (!editingName.trim()) return;
-    await updateAccount(id, { name: editingName.trim() });
+    const patch: Record<string, string> = { name: editingName.trim() };
+    if (editingPassword.trim()) patch.password = editingPassword.trim();
+    await updateAccount(id, patch as never);
     setEditingId(null);
+    setEditingPassword('');
   }
 
   async function handleAvatarChange(id: string, file: File) {
@@ -156,27 +161,37 @@ function AccountsTab() {
 
               <div className="flex-1 min-w-0">
                 {editingId === a.id ? (
-                  <div className="flex items-center gap-2 mb-1">
+                  <div className="space-y-1.5 mb-1">
                     <input
                       autoFocus
                       value={editingName}
                       onChange={(e) => setEditingName(e.target.value)}
-                      onKeyDown={(e) => { if (e.key === 'Enter') saveEdit(a.id); if (e.key === 'Escape') setEditingId(null); }}
-                      className="flex-1 text-sm px-2 py-1 rounded border border-blue-400 bg-white dark:bg-gray-800 text-gray-900 dark:text-white outline-none"
+                      onKeyDown={(e) => { if (e.key === 'Escape') setEditingId(null); }}
+                      className="w-full text-sm px-2 py-1 rounded border border-blue-400 bg-white dark:bg-gray-800 text-gray-900 dark:text-white outline-none"
                       placeholder="表示名"
                     />
-                    <button
-                      onClick={() => saveEdit(a.id)}
-                      className="p-1.5 rounded bg-blue-600 hover:bg-blue-700 text-white"
-                    >
-                      <Check size={13} />
-                    </button>
-                    <button
-                      onClick={() => setEditingId(null)}
-                      className="p-1.5 rounded hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-400"
-                    >
-                      <X size={13} />
-                    </button>
+                    <input
+                      type="password"
+                      value={editingPassword}
+                      onChange={(e) => setEditingPassword(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === 'Enter') saveEdit(a.id); if (e.key === 'Escape') setEditingId(null); }}
+                      className="w-full text-sm px-2 py-1 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white outline-none focus:border-blue-400"
+                      placeholder="パスワードを更新（変更しない場合は空欄）"
+                    />
+                    <div className="flex gap-1.5">
+                      <button
+                        onClick={() => saveEdit(a.id)}
+                        className="flex items-center gap-1 px-2.5 py-1 rounded bg-blue-600 hover:bg-blue-700 text-white text-xs"
+                      >
+                        <Check size={12} /> 保存
+                      </button>
+                      <button
+                        onClick={() => { setEditingId(null); setEditingPassword(''); }}
+                        className="px-2.5 py-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-400 text-xs"
+                      >
+                        キャンセル
+                      </button>
+                    </div>
                   </div>
                 ) : (
                   <div className="text-sm font-medium text-gray-900 dark:text-white">{a.name}</div>
