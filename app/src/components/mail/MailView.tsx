@@ -421,7 +421,7 @@ function MailViewContent({
           <EmailHtmlView html={email.bodyHtml} />
         ) : (
           <pre className="text-sm text-gray-700 dark:text-gray-300 whitespace-pre-wrap font-sans leading-relaxed">
-            {email.bodyText}
+            <LinkifiedText text={email.bodyText} />
           </pre>
         )}
       </div>
@@ -460,6 +460,35 @@ function MailViewContent({
           accountId={accountId}
           onClose={() => setShowQuickFilter(false)}
         />
+      )}
+    </>
+  );
+}
+
+const URL_REGEX = /(https?:\/\/[^\s<>"')\]]+)/g;
+
+function LinkifiedText({ text }: { text: string }) {
+  const parts = text.split(URL_REGEX);
+  return (
+    <>
+      {parts.map((part, i) =>
+        URL_REGEX.test(part) ? (
+          <a
+            key={i}
+            href={part}
+            onClick={(e) => {
+              e.preventDefault();
+              const api = (window as unknown as { electronAPI?: { openExternal?: (url: string) => void } }).electronAPI;
+              if (api?.openExternal) api.openExternal(part);
+              else window.open(part, '_blank');
+            }}
+            className="text-blue-500 hover:underline cursor-pointer break-all"
+          >
+            {part}
+          </a>
+        ) : (
+          <span key={i}>{part}</span>
+        )
       )}
     </>
   );
