@@ -22,7 +22,8 @@ import {
 function refreshBadge(): void {
   try { app.setBadgeCount(getTotalUnreadCount()); } catch { /* 無視 */ }
 }
-import { syncFolder, fetchFolders, imapMarkRead, imapMarkAllRead, imapPinEmail, imapDeleteEmail, imapMoveEmail, fetchAttachmentsForEmail } from '../services/imap';
+import { fetchFolders, imapMarkRead, imapMarkAllRead, imapPinEmail, imapDeleteEmail, imapMoveEmail, fetchAttachmentsForEmail } from '../services/imap';
+import { syncAllAccounts } from '../services/sync';
 import { sendEmail } from '../services/smtp';
 
 function getPassword(accountId: string): string {
@@ -48,11 +49,11 @@ export function registerMailHandlers(): void {
     return getEmail(emailId);
   });
 
-  ipcMain.handle('mail:sync', async (_e, accountId: string, folder = 'INBOX') => {
-    const account = getAccount(accountId);
-    if (!account) throw new Error('アカウントが見つかりません');
-    const password = getPassword(accountId);
-    return syncFolder(account, password, folder);
+  ipcMain.handle('mail:sync', async (_e, _accountId: string, _folder = 'INBOX') => {
+    // 全アカウントの背景同期を呼び出す（単一接続で全フォルダ処理）
+    // winなしで呼ぶと通知は飛ばないが同期自体は完走する
+    syncAllAccounts().catch(console.error);
+    return { added: 0 };
   });
 
   ipcMain.handle('mail:send', async (_e, data: ComposeData) => {

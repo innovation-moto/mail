@@ -34,9 +34,9 @@ function createClient(account: Account, password: string): ImapFlow {
     auth,
     logger: false,
     tls: { rejectUnauthorized: false },
-    connectionTimeout: 20000,
-    socketTimeout: 30000,
-    greetingTimeout: 10000,
+    connectionTimeout: 30000,
+    socketTimeout: 300000,  // 5分（多フォルダ同期中に切れないよう）
+    greetingTimeout: 15000,
     disableAutoIdle: true,
   });
 }
