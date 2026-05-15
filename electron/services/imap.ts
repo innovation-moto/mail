@@ -315,6 +315,114 @@ export async function syncFlags(
   return updated;
 }
 
+/**
+ * 1接続で全フォルダを順番に同期（接続過多によるタイムアウト解消）
+ */
+export async function syncAllFolders(
+  account: Account,
+  password: string,
+  folders: string[],
+  limit = 50,
+  onFolderDone?: (folder: string, added: number) => void,
+): Promise<{ totalAdded: number }> {
+  const client = await createClientWithRefresh(account, password);
+  let totalAdded = 0;
+
+  try {
+    await client.connect();
+
+    for (const folder of folders) {
+      let lock: MailboxLockObject | null = null;
+      try {
+        lock = await client.getMailboxLock(folder);
+        const mailbox = client.mailbox;
+        if (!mailbox || mailbox.exists === 0) {
+          lock.release();
+          lock = null;
+          continue;
+        }
+
+        console.log(`[sync] ${folder}: exists=${mailbox.exists}`);
+        const lastKnownUid = getMaxUid(account.id, folder);
+        console.log(`[sync] ${folder}: lastKnownUid=${lastKnownUid}`);
+
+        let fetchRange: string;
+        let fetchOpts: { uid: boolean } | undefined;
+        if (lastKnownUid === 0) {
+          const total = mailbox.exists;
+          const startSeq = Math.max(1, total - limit + 1);
+          fetchRange = `${startSeq}:*`;
+          fetchOpts = undefined;
+          console.log(`[sync] first sync, seq ${fetchRange}`);
+        } else {
+          fetchRange = `${lastKnownUid + 1}:*`;
+          fetchOpts = { uid: true };
+          console.log(`[sync] incremental, uid ${fetchRange}`);
+        }
+
+        let added = 0;
+        let count = 0;
+
+        // --- 新着メール取得 ---
+        for await (const msg of client.fetch(fetchRange, { uid: true, flags: true, source: true }, fetchOpts)) {
+          if (!msg.source) continue;
+          if (count >= limit) break;
+          count++;
+          if (lastKnownUid > 0 && msg.uid <= lastKnownUid) continue;
+          console.log(`[sync] msg uid=${msg.uid} seq=${msg.seq}`);
+
+          let parsed: ParsedEmail;
+          try { parsed = await parseRawEmail(msg.source); } catch { continue; }
+
+          if (isBlocked(account.id, parsed.from.address)) {
+            upsertEmail({ id: `${account.id}-${msg.uid}-${folder}`, accountId: account.id, uid: msg.uid, messageId: parsed.messageId, folder: 'Trash', from: parsed.from, to: parsed.to, cc: parsed.cc, subject: parsed.subject, bodyText: parsed.bodyText, bodyHtml: parsed.bodyHtml, date: parsed.date, isRead: true, hasAttachments: parsed.hasAttachments });
+            continue;
+          }
+
+          const filterResult = applyFilters(account.id, { from: parsed.from.address, to: parsed.to.map((t) => t.address).join(' '), subject: parsed.subject, body: parsed.bodyText });
+          const targetFolder = filterResult?.folder ?? folder;
+          const isRead = filterResult?.markRead ? true : (msg.flags?.has('\\Seen') ?? false);
+          const isStarred = filterResult?.starred ?? false;
+
+          if (filterResult?.folder && filterResult.folder !== folder) {
+            try { await client.messageMove({ uid: msg.uid }, filterResult.folder, { uid: true }); } catch { /* 移動失敗してもDB保存 */ }
+          }
+
+          upsertEmail({ id: `${account.id}-${msg.uid}-${folder}`, accountId: account.id, uid: msg.uid, messageId: parsed.messageId, folder: targetFolder, from: parsed.from, to: parsed.to, cc: parsed.cc, subject: parsed.subject, bodyText: parsed.bodyText, bodyHtml: parsed.bodyHtml, date: parsed.date, isRead, isStarred, hasAttachments: parsed.hasAttachments });
+          if (parsed.attachments.length > 0) saveAttachments(`${account.id}-${msg.uid}-${folder}`, parsed.attachments);
+          added++;
+        }
+
+        // --- フラグ同期 ---
+        const existing = getEmailUidsForFolder(account.id, folder, 200);
+        if (existing.length > 0) {
+          const uidMap = new Map(existing.map((e) => [e.uid, e]));
+          const uidRange = existing.map((e) => e.uid).join(',');
+          for await (const msg of client.fetch(uidRange, { uid: true, flags: true }, { uid: true })) {
+            const entry = uidMap.get(msg.uid);
+            if (!entry) continue;
+            const isRead = msg.flags?.has('\\Seen') ?? false;
+            const isStarred = msg.flags?.has('\\Flagged') ?? false;
+            if (isRead !== entry.isRead || isStarred !== entry.isStarred) updateEmailFlags(entry.id, isRead, isStarred);
+          }
+        }
+
+        console.log(`[sync] ${folder}: done added=${added}`);
+        totalAdded += added;
+        onFolderDone?.(folder, added);
+      } catch (e) {
+        console.error(`[sync] folder=${folder} error:`, (e as Error).message);
+      } finally {
+        lock?.release();
+      }
+    }
+  } finally {
+    await safeLogout(client);
+  }
+
+  return { totalAdded };
+}
+
 export async function imapMarkRead(
   account: Account,
   password: string,

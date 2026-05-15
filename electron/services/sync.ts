@@ -3,7 +3,7 @@ import { safeStorage } from 'electron';
 import { listAccounts } from '../db/queries/accounts';
 import { getEncryptedPassword } from '../db/queries/accounts';
 import { getUnreadCount, listEmails, getTotalUnreadCount, getDistinctFolders, getAllFolderUnreadCounts } from '../db/queries/emails';
-import { syncFolder, syncFlags, fetchFolders } from './imap';
+import { syncAllFolders, fetchFolders } from './imap';
 import { getAllSettings } from '../db/queries/settings';
 import { showNewMailNotification } from './notification';
 
@@ -93,30 +93,23 @@ export async function syncAllAccounts(win?: BrowserWindow): Promise<void> {
 
       try {
         const foldersToSync = await getFoldersToSync(account, password);
-
-        let totalAdded = 0;
         const beforeInboxCount = getUnreadCount(account.id, 'INBOX');
 
-        for (const folder of foldersToSync) {
-          try {
-            const result = await syncFolder(account, password, folder, 50);
-            await syncFlags(account, password, folder).catch(() => 0);
-            totalAdded += result.added;
-
-            // フォルダごとに同期完了したら即座にrendererへ通知（全フォルダ完了を待たない）
-            if (result.added > 0) {
+        // 1接続で全フォルダを処理（接続過多タイムアウト解消）
+        const { totalAdded } = await syncAllFolders(
+          account,
+          password,
+          foldersToSync,
+          50,
+          (folder, added) => {
+            // フォルダ完了のたびにUIへ通知
+            if (added > 0) {
               const unreadCounts = getAllFolderUnreadCounts(account.id);
               updateBadge();
-              win?.webContents.send('mail:synced', {
-                accountId: account.id,
-                added: result.added,
-                unreadCounts,
-              });
+              win?.webContents.send('mail:synced', { accountId: account.id, added, unreadCounts });
             }
-          } catch (folderErr) {
-            console.error(`[sync] folder=${folder} failed:`, (folderErr as Error).message);
-          }
-        }
+          },
+        );
 
         // INBOX の新着通知
         const afterInboxCount = getUnreadCount(account.id, 'INBOX');
@@ -132,11 +125,7 @@ export async function syncAllAccounts(win?: BrowserWindow): Promise<void> {
         // 全フォルダ完了後に最終の未読数・バッジを更新
         updateBadge();
         const unreadCounts = getAllFolderUnreadCounts(account.id);
-        win?.webContents.send('mail:synced', {
-          accountId: account.id,
-          added: totalAdded,
-          unreadCounts,
-        });
+        win?.webContents.send('mail:synced', { accountId: account.id, added: totalAdded, unreadCounts });
         console.log(`[sync] ${account.email}: folders=${foldersToSync.length} added=${totalAdded}`);
       } catch (err) {
         console.error(`[sync] Failed for ${account.email}:`, (err as Error).message);
