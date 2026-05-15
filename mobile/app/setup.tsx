@@ -120,7 +120,7 @@ export default function SetupScreen() {
     setSaving(true);
     try {
       const account: Account = {
-        id: `${email}-${Date.now()}`,
+        id: `${email.replace(/[^a-zA-Z0-9._-]/g, '_')}-${Date.now()}`,
         name: name || email.split('@')[0],
         email,
         provider,
