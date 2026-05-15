@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
 import {
-  Inbox, Send, FileText, Trash2, Star, Pin, Folder, ChevronDown,
+  Inbox, Send, FileText, Trash2, Star, Folder, ChevronDown,
   Plus, Settings, RefreshCw, PanelLeftClose, PanelLeft, GripVertical,
 } from 'lucide-react';
 import { useAccountStore } from '@/store/accountStore';
@@ -14,7 +14,6 @@ const SPECIAL_FOLDERS = [
   { path: 'Sent',    name: '送信済み',    icon: Send,     color: 'text-green-500' },
   { path: 'Drafts',  name: '下書き',      icon: FileText, color: 'text-yellow-500' },
   { path: 'Starred', name: 'スター付き',  icon: Star,     color: 'text-orange-400' },
-  { path: 'Pinned',  name: 'ピン留め',    icon: Pin,      color: 'text-blue-400' },
   { path: 'Trash',   name: 'ゴミ箱',      icon: Trash2,   color: 'text-red-400' },
 ];
 

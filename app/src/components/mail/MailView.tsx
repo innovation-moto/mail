@@ -1,7 +1,7 @@
 'use client';
 import { useState, useEffect, useRef, useCallback } from 'react';
 import {
-  Reply, Forward, Trash2, Star, StarOff, Pin, PinOff, MoreHorizontal,
+  Reply, Forward, Trash2, Star, StarOff, MoreHorizontal,
   Sparkles, ChevronDown, Paperclip, X, Copy, Check,
   FolderInput, ShieldBan, Filter, Plus, Loader2, Download, AlertTriangle, CalendarPlus,
 } from 'lucide-react';
@@ -14,7 +14,7 @@ import { cn, formatFullDate, CATEGORY_LABELS, PRIORITY_LABELS, PRIORITY_COLORS }
 
 export function MailView() {
   const { selectedAccountId } = useAccountStore();
-  const { selectedEmail, starEmail, pinEmail, deleteEmail, updateEmailLocally } = useMailStore();
+  const { selectedEmail, starEmail, deleteEmail, updateEmailLocally } = useMailStore();
   const { openCompose } = useUIStore();
   const email = selectedEmail();
 
@@ -67,7 +67,6 @@ export function MailView() {
         email={email}
         accountId={selectedAccountId ?? ''}
         onStar={(starred) => starEmail(email.id, starred)}
-        onPin={(pinned) => pinEmail(email.id, pinned)}
         onDelete={() => deleteEmail(email.id)}
         onReply={() => openCompose({ replyTo: email })}
         onReplyAll={() => openCompose({ replyTo: email, replyAll: true })}
@@ -79,12 +78,11 @@ export function MailView() {
 }
 
 function MailViewContent({
-  email, accountId, onStar, onPin, onDelete, onReply, onReplyAll, onForward, onUpdateAi,
+  email, accountId, onStar, onDelete, onReply, onReplyAll, onForward, onUpdateAi,
 }: {
   email: Email;
   accountId: string;
   onStar: (starred: boolean) => void;
-  onPin: (pinned: boolean) => void;
   onDelete: () => void;
   onReply: () => void;
   onReplyAll: () => void;
@@ -266,12 +264,7 @@ function MailViewContent({
             icon={email.isStarred ? <StarOff size={15} /> : <Star size={15} />}
             label={email.isStarred ? 'スター解除' : 'スター'}
             onClick={() => onStar(!email.isStarred)}
-          />
-          <ActionButton
-            icon={email.isPinned ? <PinOff size={15} /> : <Pin size={15} />}
-            label={email.isPinned ? 'ピン解除' : 'ピン留め'}
-            onClick={() => onPin(!email.isPinned)}
-            active={email.isPinned}
+            active={email.isStarred}
           />
           <ActionButton icon={<Trash2 size={15} />} label="削除" onClick={onDelete} variant="danger" />
 

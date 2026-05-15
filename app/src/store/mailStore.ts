@@ -29,7 +29,6 @@ interface MailState {
   markRead: (emailId: string, isRead: boolean) => Promise<void>;
   markAllRead: (accountId: string, folder: string) => Promise<void>;
   starEmail: (emailId: string, isStarred: boolean) => Promise<void>;
-  pinEmail: (emailId: string, isPinned: boolean) => Promise<void>;
   deleteEmail: (emailId: string) => Promise<void>;
   moveEmail: (emailId: string, folder: string) => Promise<void>;
   search: (accountId: string, query: string) => Promise<void>;
@@ -166,15 +165,6 @@ export const useMailStore = create<MailState>((set, get) => ({
   starEmail: async (emailId, isStarred) => {
     get().updateEmailLocally(emailId, { isStarred });
     await api.mail.star(emailId, isStarred);
-  },
-
-  pinEmail: async (emailId, isPinned) => {
-    get().updateEmailLocally(emailId, { isPinned });
-    // Pinnedフォルダ表示中は解除したメールをリストから除去
-    if (get().selectedFolder === 'Pinned' && !isPinned) {
-      set((s) => ({ emails: s.emails.filter((e) => e.id !== emailId) }));
-    }
-    await api.mail.pin(emailId, isPinned);
   },
 
   deleteEmail: async (emailId) => {

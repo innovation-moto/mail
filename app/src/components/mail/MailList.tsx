@@ -1,6 +1,6 @@
 'use client';
 import { useState, useEffect, useRef } from 'react';
-import { Search, Sparkles, X, RefreshCw, Paperclip, ShieldBan, Trash2, CheckCheck, Pin, PinOff } from 'lucide-react';
+import { Search, Sparkles, X, RefreshCw, Paperclip, ShieldBan, Trash2, CheckCheck } from 'lucide-react';
 import { useAccountStore } from '@/store/accountStore';
 import { useMailStore } from '@/store/mailStore';
 import { Email } from '@/types/shared';
@@ -102,7 +102,6 @@ export function MailList() {
     : selectedFolder === 'Drafts' ? '下書き'
     : selectedFolder === 'Trash' ? 'ゴミ箱'
     : selectedFolder === 'Starred' ? 'スター付き'
-    : selectedFolder === 'Pinned' ? 'ピン留め'
     : selectedFolder;
 
   return (
@@ -221,7 +220,7 @@ function EmailItem({
   onClick: () => void;
 }) {
   const { selectedAccountId } = useAccountStore();
-  const { deleteEmail, pinEmail } = useMailStore();
+  const { deleteEmail } = useMailStore();
   const [hovered, setHovered] = useState(false);
 
   async function handleQuickDelete(e: React.MouseEvent) {
@@ -234,11 +233,6 @@ function EmailItem({
     if (!selectedAccountId) return;
     if (!confirm(`${email.from.address} をブロックしますか？`)) return;
     await api.blocklist.add(selectedAccountId, email.from.address, 'address');
-  }
-
-  async function handleQuickPin(e: React.MouseEvent) {
-    e.stopPropagation();
-    await pinEmail(email.id, !email.isPinned);
   }
 
   return (
@@ -296,9 +290,6 @@ function EmailItem({
             {!email.isRead && (
               <span className="w-2 h-2 rounded-full bg-blue-500 flex-shrink-0" />
             )}
-            {email.isPinned && (
-              <Pin size={11} className="text-blue-400 flex-shrink-0" />
-            )}
             {email.isStarred && (
               <span className="text-yellow-400 flex-shrink-0 text-xs">★</span>
             )}
@@ -313,18 +304,6 @@ function EmailItem({
     {/* クイックアクションボタン（ホバー時に表示） */}
     {hovered && (
       <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
-        <button
-          onClick={handleQuickPin}
-          title={email.isPinned ? 'ピン留めを外す' : 'ピン留め'}
-          className={cn(
-            'p-1.5 rounded-lg bg-white dark:bg-gray-800 border shadow-sm transition-colors',
-            email.isPinned
-              ? 'border-blue-300 text-blue-500 hover:text-blue-600'
-              : 'border-gray-200 dark:border-gray-600 text-gray-400 hover:text-blue-500 hover:border-blue-300',
-          )}
-        >
-          {email.isPinned ? <PinOff size={13} /> : <Pin size={13} />}
-        </button>
         <button
           onClick={handleQuickDelete}
           title="削除"
