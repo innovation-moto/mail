@@ -116,17 +116,15 @@ export const useMailStore = create<MailState>((set, get) => ({
     set({ syncing: true });
     try {
       const result = await api.mail.sync(accountId, get().selectedFolder);
-      // スピナーを出さずサイレントにリロード
-      const f = get().selectedFolder;
-      try {
-        const emails = await api.mail.fetchEmails(accountId, f, 50, 0);
-        set({ emails });
-      } catch {}
-      // 全フォルダの未読数を更新
-      get().loadUnreadCounts(accountId).catch(() => {});
+      // syncing:false は mail:synced イベント受信時にAppShellでセットする
+      // イベントが届かない場合の2分タイムアウトフォールバック
+      setTimeout(() => {
+        if (get().syncing) set({ syncing: false });
+      }, 120000);
       return result;
-    } finally {
+    } catch (e) {
       set({ syncing: false });
+      throw e;
     }
   },
 

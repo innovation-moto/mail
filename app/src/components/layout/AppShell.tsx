@@ -56,6 +56,8 @@ export function AppShell() {
       if (accountId !== currentAccountId) return;
       console.log('[mail:synced] received, unreadCounts:', unreadCounts);
       setUnreadCounts(unreadCounts);
+      // 同期完了でスピナーを止める
+      useMailStore.setState({ syncing: false });
       // 現在のフォルダのメール一覧も静かに更新
       const selectedFolder = useMailStore.getState().selectedFolder;
       loadEmails(accountId, selectedFolder).catch(() => {});
