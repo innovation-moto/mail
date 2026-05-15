@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import * as SecureStore from 'expo-secure-store';
-import type { Account } from '../../shared/types';
+import type { Account } from '@/shared/types';
 
 const ACCOUNTS_KEY = 'im_mail_accounts';
 const PASSWORDS_KEY_PREFIX = 'im_mail_pwd_';

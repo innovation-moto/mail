@@ -1,5 +1,5 @@
 import * as SQLite from 'expo-sqlite';
-import type { Email, EmailAddress } from '../../shared/types';
+import type { Email, EmailAddress } from '@/shared/types';
 
 let db: SQLite.SQLiteDatabase | null = null;
 

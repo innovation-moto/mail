@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { Email } from '../../shared/types';
+import type { Email } from '@/shared/types';
 import { mailApi } from '../lib/api';
 import {
   listEmails,

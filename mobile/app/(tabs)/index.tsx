@@ -14,7 +14,7 @@ import { useRouter } from 'expo-router';
 import { useAccountStore } from '../../store/accountStore';
 import { useMailStore } from '../../store/mailStore';
 import EmailItem from '../../components/EmailItem';
-import type { Email } from '../../../shared/types';
+import type { Email } from '@/shared/types';
 
 export default function InboxScreen() {
   const router = useRouter();

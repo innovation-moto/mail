@@ -16,8 +16,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useAccountStore } from '../store/accountStore';
 import { mailApi } from '../lib/api';
-import type { Account, AccountConfig } from '../../shared/types';
-import { PROVIDER_PRESETS } from '../../shared/types';
+import type { Account, AccountConfig } from '@/shared/types';
+import { PROVIDER_PRESETS } from '@/shared/types';
 
 type Provider = 'gmail' | 'outlook' | 'yahoo' | 'custom';
 

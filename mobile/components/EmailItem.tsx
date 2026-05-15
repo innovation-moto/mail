@@ -6,7 +6,7 @@ import {
   StyleSheet,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import type { Email } from '../../shared/types';
+import type { Email } from '@/shared/types';
 
 function formatDate(timestamp: number): string {
   const date = new Date(timestamp);

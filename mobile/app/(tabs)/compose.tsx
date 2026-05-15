@@ -16,7 +16,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useAccountStore } from '../../store/accountStore';
 import { mailApi } from '../../lib/api';
-import type { ComposeData } from '../../../shared/types';
+import type { ComposeData } from '@/shared/types';
 
 export default function ComposeScreen() {
   const router = useRouter();

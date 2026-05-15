@@ -14,7 +14,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import WebView from 'react-native-webview';
 import { useMailStore } from '../../store/mailStore';
 import { getEmail } from '../../lib/db';
-import type { Email } from '../../../shared/types';
+import type { Email } from '@/shared/types';
 
 function formatFullDate(timestamp: number): string {
   const date = new Date(timestamp);

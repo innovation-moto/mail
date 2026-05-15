@@ -1,4 +1,4 @@
-import type { Account, ComposeData, Email, Folder, TestConnectionResult } from '../../shared/types';
+import type { Account, ComposeData, Email, Folder, TestConnectionResult } from '@/shared/types';
 
 const BASE_URL = (process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:3000').replace(/\/$/, '');
 
