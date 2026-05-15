@@ -72,9 +72,8 @@ function initializeApp(): void {
   // Initialize DB
   getDb();
 
-  // Register all IPC handlers
+  // Register IPC handlers that don't need a window reference
   registerAccountHandlers();
-  registerMailHandlers();
   registerAiHandlers();
   registerBlocklistHandlers();
   registerSettingsHandlers();
@@ -93,6 +92,8 @@ app.whenReady().then(() => {
   createWindow();
 
   if (mainWindow) {
+    // mail:sync IPCにwinを渡してUIへの通知を有効化
+    registerMailHandlers(mainWindow);
     // 起動時にDBの未読数をバッジに反映
     try { app.setBadgeCount(getTotalUnreadCount()); } catch { /* 無視 */ }
     // Initial sync after 2 seconds

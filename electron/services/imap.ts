@@ -384,9 +384,8 @@ export async function syncAllFolders(
           const isRead = filterResult?.markRead ? true : (msg.flags?.has('\\Seen') ?? false);
           const isStarred = filterResult?.starred ?? false;
 
-          if (filterResult?.folder && filterResult.folder !== folder) {
-            try { await client.messageMove({ uid: msg.uid }, filterResult.folder, { uid: true }); } catch { /* 移動失敗してもDB保存 */ }
-          }
+          // サーバー側IMAP移動はハングの原因になるためスキップ
+          // DBのフォルダ割り当てのみ変更（ローカル表示上の振り分け）
 
           upsertEmail({ id: `${account.id}-${msg.uid}-${folder}`, accountId: account.id, uid: msg.uid, messageId: parsed.messageId, folder: targetFolder, from: parsed.from, to: parsed.to, cc: parsed.cc, subject: parsed.subject, bodyText: parsed.bodyText, bodyHtml: parsed.bodyHtml, date: parsed.date, isRead, isStarred, hasAttachments: parsed.hasAttachments });
           if (parsed.attachments.length > 0) saveAttachments(`${account.id}-${msg.uid}-${folder}`, parsed.attachments);

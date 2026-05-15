@@ -22,6 +22,7 @@ import {
 function refreshBadge(): void {
   try { app.setBadgeCount(getTotalUnreadCount()); } catch { /* 無視 */ }
 }
+import { BrowserWindow } from 'electron';
 import { fetchFolders, imapMarkRead, imapMarkAllRead, imapPinEmail, imapDeleteEmail, imapMoveEmail, fetchAttachmentsForEmail } from '../services/imap';
 import { syncAllAccounts } from '../services/sync';
 import { sendEmail } from '../services/smtp';
@@ -32,7 +33,7 @@ function getPassword(accountId: string): string {
   return safeStorage.decryptString(enc);
 }
 
-export function registerMailHandlers(): void {
+export function registerMailHandlers(win: BrowserWindow): void {
   ipcMain.handle('mail:fetchFolders', async (_e, accountId: string) => {
     const account = getAccount(accountId);
     if (!account) throw new Error('アカウントが見つかりません');
@@ -50,9 +51,8 @@ export function registerMailHandlers(): void {
   });
 
   ipcMain.handle('mail:sync', async (_e, _accountId: string, _folder = 'INBOX') => {
-    // 全アカウントの背景同期を呼び出す（単一接続で全フォルダ処理）
-    // winなしで呼ぶと通知は飛ばないが同期自体は完走する
-    syncAllAccounts().catch(console.error);
+    // 全アカウントの背景同期をトリガー（winを渡してUIへ通知）
+    syncAllAccounts(win).catch(console.error);
     return { added: 0 };
   });
 
