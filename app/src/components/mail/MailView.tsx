@@ -486,10 +486,28 @@ function EmailHtmlView({ html }: { html: string }) {
     const iframe = iframeRef.current;
     if (!iframe) return;
     try {
-      const body = iframe.contentDocument?.body;
-      if (body) {
-        iframe.style.height = `${body.scrollHeight + 32}px`;
+      const doc = iframe.contentDocument;
+      if (!doc) return;
+      // 高さ自動調整
+      if (doc.body) {
+        iframe.style.height = `${doc.body.scrollHeight + 32}px`;
       }
+      // リンクをすべて外部ブラウザで開く
+      doc.addEventListener('click', (e) => {
+        const target = (e.target as HTMLElement).closest('a');
+        if (!target) return;
+        const href = target.getAttribute('href');
+        if (!href) return;
+        e.preventDefault();
+        if (/^https?:\/\//i.test(href)) {
+          const api = (window as unknown as { electronAPI?: { openExternal?: (url: string) => void } }).electronAPI;
+          if (api?.openExternal) {
+            api.openExternal(href);
+          } else {
+            window.open(href, '_blank');
+          }
+        }
+      });
     } catch { /* cross-origin guard */ }
   }, []);
 

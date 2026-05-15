@@ -72,6 +72,7 @@ const api = {
     ipcRenderer.on(channel, handler);
     return () => ipcRenderer.off(channel, handler);
   },
+  openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url),
 };
 
 contextBridge.exposeInMainWorld('electronAPI', api);

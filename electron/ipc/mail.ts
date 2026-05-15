@@ -200,4 +200,11 @@ export function registerMailHandlers(win: BrowserWindow): void {
     shell.showItemInFolder(filePath);
     return filePath;
   });
+
+  ipcMain.handle('shell:openExternal', (_e, url: string) => {
+    // httpまたはhttpsのURLのみ外部ブラウザで開く
+    if (/^https?:\/\//i.test(url)) {
+      shell.openExternal(url);
+    }
+  });
 }
