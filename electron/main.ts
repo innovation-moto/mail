@@ -50,6 +50,18 @@ function createWindow(): void {
     mainWindow?.show();
   });
 
+  // file://ページから外部HTTPS画像(favicon等)を読み込めるようCSPを設定
+  mainWindow.webContents.session.webRequest.onHeadersReceived((details, callback) => {
+    callback({
+      responseHeaders: {
+        ...details.responseHeaders,
+        'Content-Security-Policy': [
+          "default-src 'self' 'unsafe-inline' 'unsafe-eval' file: data: blob: https:; img-src 'self' file: data: blob: https:;"
+        ],
+      },
+    });
+  });
+
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url);
     return { action: 'deny' };

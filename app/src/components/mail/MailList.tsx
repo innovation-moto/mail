@@ -7,19 +7,27 @@ import { Email } from '@/types/shared';
 import { cn, formatEmailDate, truncate, getInitials, getAvatarColor, PRIORITY_COLORS } from '@/lib/utils';
 import { api } from '@/lib/ipc';
 
+const FAVICON_SOURCES = (domain: string) => [
+  `https://www.google.com/s2/favicons?domain=${domain}&sz=64`,
+  `https://icons.duckduckgo.com/ip3/${domain}.ico`,
+  `https://${domain}/favicon.ico`,
+];
+
 function SenderAvatar({ email, name }: { email: string; name?: string }) {
   const domain = email.split('@')[1] ?? '';
-  const faviconUrl = `https://www.google.com/s2/favicons?domain=${domain}&sz=64`;
-  const [useFavicon, setUseFavicon] = useState(true);
+  const [srcIndex, setSrcIndex] = useState(0);
+  const sources = FAVICON_SOURCES(domain);
 
-  if (useFavicon && domain) {
+  const handleError = () => setSrcIndex((i) => i + 1);
+
+  if (domain && srcIndex < sources.length) {
     return (
       <div className="w-8 h-8 rounded-full flex-shrink-0 mt-0.5 overflow-hidden bg-gray-100 dark:bg-gray-700 flex items-center justify-center">
         <img
-          src={faviconUrl}
+          src={sources[srcIndex]}
           alt={name || email}
           className="w-5 h-5 object-contain"
-          onError={() => setUseFavicon(false)}
+          onError={handleError}
         />
       </div>
     );
