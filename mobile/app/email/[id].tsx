@@ -1,9 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   View, Text, TouchableOpacity, ScrollView, StyleSheet,
-  ActivityIndicator, Alert, Modal, Animated, Dimensions,
+  ActivityIndicator, Alert, Modal, Animated, Dimensions, Platform,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { BlurView } from 'expo-blur';
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import WebView from 'react-native-webview';
@@ -205,21 +206,26 @@ export default function EmailDetailScreen() {
         <TouchableOpacity style={s.backBtn} onPress={() => router.back()}>
           <Ionicons name="chevron-back" size={26} color="#007AFF" />
         </TouchableOpacity>
-        <View style={s.headerActions}>
-          <TouchableOpacity style={s.actionBtn} onPress={handleStar}>
-            <Ionicons
-              name={email.isStarred ? 'bookmark' : 'bookmark-outline'}
-              size={22}
-              color={email.isStarred ? '#FF9500' : '#3C3C43'}
-            />
-          </TouchableOpacity>
-          <TouchableOpacity style={s.actionBtn} onPress={handleAiButton}>
-            <Ionicons name="flash" size={22} color={openAiKey ? '#007AFF' : '#C7C7CC'} />
-          </TouchableOpacity>
-          <TouchableOpacity style={s.actionBtn}>
-            <Ionicons name="person-add-outline" size={22} color="#3C3C43" />
-          </TouchableOpacity>
-        </View>
+        {/* リキッドグラス pill ─ 右ボタン群 */}
+        <BlurView intensity={60} tint="light" style={s.headerGlassPill}>
+          <View style={s.headerGlassInner}>
+            <TouchableOpacity style={s.glassBtn} onPress={handleStar}>
+              <Ionicons
+                name={email.isStarred ? 'bookmark' : 'bookmark-outline'}
+                size={20}
+                color={email.isStarred ? '#FF9500' : '#3C3C43'}
+              />
+            </TouchableOpacity>
+            <View style={s.glassDivider} />
+            <TouchableOpacity style={s.glassBtn} onPress={handleAiButton}>
+              <Ionicons name="flash" size={20} color={openAiKey ? '#007AFF' : '#C7C7CC'} />
+            </TouchableOpacity>
+            <View style={s.glassDivider} />
+            <TouchableOpacity style={s.glassBtn}>
+              <Ionicons name="person-add-outline" size={20} color="#3C3C43" />
+            </TouchableOpacity>
+          </View>
+        </BlurView>
       </View>
 
       {/* ─── 件名 ─── */}
@@ -279,41 +285,50 @@ export default function EmailDetailScreen() {
             }}
           />
         ) : (
-          <ScrollView style={s.textScroll} contentContainerStyle={{ padding: 16, paddingBottom: 120 }}>
+          <ScrollView style={s.textScroll} contentContainerStyle={{ padding: 16, paddingBottom: 140 }}>
             <Text style={s.bodyText}>{email.bodyText || '本文がありません'}</Text>
           </ScrollView>
         )}
       </View>
 
-      {/* ─── フッター アクションバー ─── */}
-      <View style={[s.actionBar, { paddingBottom: insets.bottom + 4 }]}>
-        <TouchableOpacity style={s.barBtn} onPress={handleDelete}>
-          <Ionicons name="archive-outline" size={24} color="#3C3C43" />
-        </TouchableOpacity>
-        <TouchableOpacity style={s.barBtn} onPress={() => router.push(`/compose?mode=reply&emailId=${email.id}`)}>
-          <Ionicons name="arrow-undo-outline" size={24} color="#3C3C43" />
-        </TouchableOpacity>
-        <TouchableOpacity style={s.barBtn} onPress={() => {
-          markRead(email.id, email.uid, email.folder || selectedFolder);
-          setEmail(prev => prev ? { ...prev, isRead: true } : prev);
-        }}>
-          <Ionicons name="checkmark-outline" size={26} color="#3C3C43" />
-        </TouchableOpacity>
-        <TouchableOpacity style={s.barBtn} onPress={() => router.push(`/compose?mode=forward&emailId=${email.id}`)}>
-          <Ionicons name="arrow-redo-outline" size={24} color="#3C3C43" />
-        </TouchableOpacity>
-        <TouchableOpacity style={s.barBtn}>
-          <Ionicons name="time-outline" size={24} color="#3C3C43" />
-        </TouchableOpacity>
-        <TouchableOpacity style={s.barBtn} onPress={() => {
-          Alert.alert('その他', undefined, [
-            { text: '全員に返信', onPress: () => router.push(`/compose?mode=replyAll&emailId=${email.id}`) },
-            { text: '削除', style: 'destructive', onPress: handleDelete },
-            { text: 'キャンセル', style: 'cancel' },
-          ]);
-        }}>
-          <Ionicons name="ellipsis-horizontal" size={24} color="#3C3C43" />
-        </TouchableOpacity>
+      {/* ─── フローティング リキッドグラス ツールバー ─── */}
+      <View style={[s.toolbarWrap, { bottom: insets.bottom + 12 }]}>
+        <BlurView intensity={70} tint="light" style={s.toolbarBlur}>
+          <View style={s.toolbarInner}>
+            <TouchableOpacity style={s.toolbarBtn} onPress={handleDelete}>
+              <Ionicons name="archive-outline" size={22} color="#3C3C43" />
+            </TouchableOpacity>
+            <View style={s.toolbarDivider} />
+            <TouchableOpacity style={s.toolbarBtn} onPress={() => router.push(`/compose?mode=reply&emailId=${email.id}`)}>
+              <Ionicons name="arrow-undo-outline" size={22} color="#3C3C43" />
+            </TouchableOpacity>
+            <View style={s.toolbarDivider} />
+            <TouchableOpacity style={s.toolbarBtn} onPress={() => {
+              markRead(email.id, email.uid, email.folder || selectedFolder);
+              setEmail(prev => prev ? { ...prev, isRead: true } : prev);
+            }}>
+              <Ionicons name="checkmark-outline" size={24} color="#3C3C43" />
+            </TouchableOpacity>
+            <View style={s.toolbarDivider} />
+            <TouchableOpacity style={s.toolbarBtn} onPress={() => router.push(`/compose?mode=forward&emailId=${email.id}`)}>
+              <Ionicons name="arrow-redo-outline" size={22} color="#3C3C43" />
+            </TouchableOpacity>
+            <View style={s.toolbarDivider} />
+            <TouchableOpacity style={s.toolbarBtn}>
+              <Ionicons name="time-outline" size={22} color="#3C3C43" />
+            </TouchableOpacity>
+            <View style={s.toolbarDivider} />
+            <TouchableOpacity style={s.toolbarBtn} onPress={() => {
+              Alert.alert('その他', undefined, [
+                { text: '全員に返信', onPress: () => router.push(`/compose?mode=replyAll&emailId=${email.id}`) },
+                { text: '削除', style: 'destructive', onPress: handleDelete },
+                { text: 'キャンセル', style: 'cancel' },
+              ]);
+            }}>
+              <Ionicons name="ellipsis-horizontal" size={22} color="#3C3C43" />
+            </TouchableOpacity>
+          </View>
+        </BlurView>
       </View>
 
       {/* ─── AI シート (Modal) ─── */}
@@ -490,8 +505,32 @@ const s = StyleSheet.create({
     borderBottomWidth: 0.5, borderBottomColor: '#E5E5EA',
   },
   backBtn: { padding: 4 },
-  headerActions: { flexDirection: 'row', alignItems: 'center' },
-  actionBtn: { padding: 10 },
+  // ─── ヘッダー右側 リキッドグラス pill ───
+  headerGlassPill: {
+    borderRadius: 22,
+    overflow: 'hidden',
+    borderWidth: 0.5,
+    borderColor: 'rgba(255,255,255,0.6)',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.10,
+    shadowRadius: 12,
+    elevation: 6,
+  },
+  headerGlassInner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.3)',
+    paddingVertical: 2,
+    paddingHorizontal: 2,
+  },
+  glassBtn: {
+    paddingHorizontal: 12, paddingVertical: 9,
+  },
+  glassDivider: {
+    width: 0.5, height: 16,
+    backgroundColor: 'rgba(60,60,67,0.2)',
+  },
   subjectArea: { paddingHorizontal: 16, paddingVertical: 14, borderBottomWidth: 0.5, borderBottomColor: '#F0F0F0' },
   subject: { fontSize: 20, fontWeight: '700', color: '#000', lineHeight: 26 },
   senderCard: {
@@ -521,12 +560,37 @@ const s = StyleSheet.create({
   textScroll: { flex: 1 },
   bodyText: { fontSize: 15, color: '#1c1c1e', lineHeight: 22 },
 
-  // ─── フッター ───
-  actionBar: {
-    flexDirection: 'row', borderTopWidth: 0.5, borderTopColor: '#E5E5EA',
-    paddingVertical: 4, paddingHorizontal: 0, backgroundColor: '#fff',
+  // ─── フローティング リキッドグラス ツールバー ───
+  toolbarWrap: {
+    position: 'absolute', left: 20, right: 20,
+    borderRadius: 26,
+    // 外側シャドウ
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.18,
+    shadowRadius: 24,
+    elevation: 16,
   },
-  barBtn: { flex: 1, alignItems: 'center', paddingVertical: 10 },
+  toolbarBlur: {
+    borderRadius: 26,
+    overflow: 'hidden',
+    borderWidth: 0.5,
+    borderColor: 'rgba(255,255,255,0.55)',
+  },
+  toolbarInner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.28)',
+    paddingVertical: 2,
+    paddingHorizontal: 4,
+  },
+  toolbarBtn: {
+    flex: 1, alignItems: 'center', paddingVertical: 13,
+  },
+  toolbarDivider: {
+    width: 0.5, height: 20,
+    backgroundColor: 'rgba(60,60,67,0.15)',
+  },
 
   // ─── AI シート ───
   overlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.3)' },
