@@ -35,10 +35,11 @@ export default function RootLayout() {
         <AppInit>
           <StatusBar style="dark" />
           <Stack screenOptions={{ headerShown: false }}>
-            <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+            <Stack.Screen name="index" options={{ headerShown: false }} />
             <Stack.Screen name="email/[id]" options={{ headerShown: false, presentation: 'card' }} />
+            <Stack.Screen name="compose" options={{ headerShown: false, presentation: 'card' }} />
+            <Stack.Screen name="settings" options={{ headerShown: false, presentation: 'card' }} />
             <Stack.Screen name="setup" options={{ headerShown: false, presentation: 'modal' }} />
-            <Stack.Screen name="settings" options={{ headerShown: false }} />
           </Stack>
         </AppInit>
       </QueryClientProvider>
