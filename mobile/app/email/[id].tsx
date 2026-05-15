@@ -3,7 +3,7 @@ import {
   View, Text, TouchableOpacity, ScrollView, StyleSheet,
   ActivityIndicator, Alert, Modal, Animated, Dimensions,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import WebView from 'react-native-webview';
@@ -25,6 +25,7 @@ type AiSheet = 'menu' | 'summary' | 'reply' | 'event' | null;
 export default function EmailDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const { markRead, starEmail, deleteEmail, selectedFolder } = useMailStore();
   const { openAiKey } = useAccountStore();
 
@@ -285,24 +286,24 @@ export default function EmailDetailScreen() {
       </View>
 
       {/* ─── フッター アクションバー ─── */}
-      <View style={s.actionBar}>
+      <View style={[s.actionBar, { paddingBottom: insets.bottom + 4 }]}>
         <TouchableOpacity style={s.barBtn} onPress={handleDelete}>
-          <Ionicons name="archive-outline" size={22} color="#3C3C43" />
+          <Ionicons name="archive-outline" size={24} color="#3C3C43" />
         </TouchableOpacity>
         <TouchableOpacity style={s.barBtn} onPress={() => router.push(`/compose?mode=reply&emailId=${email.id}`)}>
-          <Ionicons name="arrow-undo-outline" size={22} color="#3C3C43" />
+          <Ionicons name="arrow-undo-outline" size={24} color="#3C3C43" />
         </TouchableOpacity>
         <TouchableOpacity style={s.barBtn} onPress={() => {
           markRead(email.id, email.uid, email.folder || selectedFolder);
           setEmail(prev => prev ? { ...prev, isRead: true } : prev);
         }}>
-          <Ionicons name="checkmark-outline" size={24} color="#3C3C43" />
+          <Ionicons name="checkmark-outline" size={26} color="#3C3C43" />
         </TouchableOpacity>
         <TouchableOpacity style={s.barBtn} onPress={() => router.push(`/compose?mode=forward&emailId=${email.id}`)}>
-          <Ionicons name="arrow-redo-outline" size={22} color="#3C3C43" />
+          <Ionicons name="arrow-redo-outline" size={24} color="#3C3C43" />
         </TouchableOpacity>
         <TouchableOpacity style={s.barBtn}>
-          <Ionicons name="time-outline" size={22} color="#3C3C43" />
+          <Ionicons name="time-outline" size={24} color="#3C3C43" />
         </TouchableOpacity>
         <TouchableOpacity style={s.barBtn} onPress={() => {
           Alert.alert('その他', undefined, [
@@ -311,7 +312,7 @@ export default function EmailDetailScreen() {
             { text: 'キャンセル', style: 'cancel' },
           ]);
         }}>
-          <Ionicons name="ellipsis-horizontal" size={22} color="#3C3C43" />
+          <Ionicons name="ellipsis-horizontal" size={24} color="#3C3C43" />
         </TouchableOpacity>
       </View>
 

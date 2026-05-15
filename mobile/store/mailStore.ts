@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { Email } from '@/shared/types';
+import type { Email, Folder } from '@/shared/types';
 import { mailApi } from '../lib/api';
 import {
   listEmails,
@@ -13,16 +13,19 @@ import { useAccountStore } from './accountStore';
 
 interface MailStore {
   emails: Email[];
+  folders: Folder[];
   selectedEmailId: string | null;
   selectedFolder: string;
   loading: boolean;
   syncing: boolean;
+  foldersLoading: boolean;
   error: string | null;
 
   setFolder(folder: string): void;
   selectEmail(id: string | null): void;
   getSelectedEmail(): Email | null;
 
+  loadFolders(accountId: string): Promise<void>;
   loadEmails(accountId: string, folder: string): Promise<void>;
   syncEmails(accountId: string, folder: string): Promise<void>;
 
@@ -33,10 +36,12 @@ interface MailStore {
 
 export const useMailStore = create<MailStore>((set, get) => ({
   emails: [],
+  folders: [],
   selectedEmailId: null,
   selectedFolder: 'INBOX',
   loading: false,
   syncing: false,
+  foldersLoading: false,
   error: null,
 
   setFolder(folder: string) {
@@ -50,6 +55,25 @@ export const useMailStore = create<MailStore>((set, get) => ({
   getSelectedEmail(): Email | null {
     const { emails, selectedEmailId } = get();
     return emails.find((e) => e.id === selectedEmailId) ?? null;
+  },
+
+  async loadFolders(accountId: string) {
+    const accountStore = useAccountStore.getState();
+    const account = accountStore.accounts.find((a) => a.id === accountId);
+    if (!account) return;
+    const password = await accountStore.getPassword(accountId);
+    if (!password) return;
+
+    set({ foldersLoading: true });
+    try {
+      const folders = await mailApi.folders(account, password);
+      set({ folders });
+    } catch (err) {
+      // フォルダ取得失敗は無視（ハードコードにフォールバック）
+      console.warn('[loadFolders]', err);
+    } finally {
+      set({ foldersLoading: false });
+    }
   },
 
   async loadEmails(accountId: string, folder: string) {
