@@ -1,5 +1,5 @@
 'use client';
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Search, Sparkles, X, RefreshCw, Paperclip, ShieldBan, Trash2, CheckCheck, Pin, PinOff } from 'lucide-react';
 import { useAccountStore } from '@/store/accountStore';
 import { useMailStore } from '@/store/mailStore';
@@ -44,6 +44,19 @@ export function MailList() {
   const [query, setQuery] = useState('');
   const [aiEnabled, setAiEnabled] = useState(false);
   const [searchMode, setSearchMode] = useState<'normal' | 'smart'>('normal');
+  const [newMailThreshold, setNewMailThreshold] = useState<number>(0);
+  const prevFolderKey = useRef('');
+
+  // フォルダ切り替え時に「最後に見た時刻」を記録し、新着区切りのしきい値を設定
+  useEffect(() => {
+    if (!selectedAccountId) return;
+    const key = `lastSeen:${selectedAccountId}:${selectedFolder}`;
+    if (prevFolderKey.current === key) return;
+    prevFolderKey.current = key;
+    const last = Number(localStorage.getItem(key) ?? 0);
+    setNewMailThreshold(last);
+    localStorage.setItem(key, String(Date.now()));
+  }, [selectedAccountId, selectedFolder]);
 
   const displayEmails = searchResults ?? emails;
 
@@ -153,14 +166,29 @@ export function MailList() {
             <p className="text-sm">{searchResults !== null ? '該当なし' : 'メールなし'}</p>
           </div>
         ) : (
-          displayEmails.map((email) => (
-            <EmailItem
-              key={email.id}
-              email={email}
-              selected={selectedEmailId === email.id}
-              onClick={() => handleSelectEmail(email)}
-            />
-          ))
+          (() => {
+            // 新着区切り線を挿入する位置を探す（threshold より新しい最初のメール）
+            const dividerIndex = newMailThreshold > 0
+              ? displayEmails.findIndex((e) => e.date > newMailThreshold)
+              : -1;
+            return displayEmails.map((email, i) => (
+              <>
+                {dividerIndex === i && (
+                  <div key={`divider-${i}`} className="flex items-center gap-2 px-3 py-1.5">
+                    <div className="flex-1 h-px bg-blue-400/50" />
+                    <span className="text-[10px] font-medium text-blue-400 whitespace-nowrap">新着メール</span>
+                    <div className="flex-1 h-px bg-blue-400/50" />
+                  </div>
+                )}
+                <EmailItem
+                  key={email.id}
+                  email={email}
+                  selected={selectedEmailId === email.id}
+                  onClick={() => handleSelectEmail(email)}
+                />
+              </>
+            ));
+          })()
         )}
       </div>
     </div>
