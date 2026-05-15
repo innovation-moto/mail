@@ -5,6 +5,7 @@ import {
   TextInput, SectionList,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { BlurView } from 'expo-blur';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useAccountStore } from '../store/accountStore';
@@ -196,23 +197,31 @@ export default function InboxScreen() {
         </Modal>
       )}
 
-      <SafeAreaView style={{ flex: 1, backgroundColor: '#fff' }} edges={['top']}>
-        {/* ヘッダー */}
-        <View style={s.header}>
-          <TouchableOpacity style={s.menuBtn} onPress={openDrawer}>
-            <Ionicons name="menu" size={24} color="#000" />
-          </TouchableOpacity>
-          <TouchableOpacity style={s.titleBtn} onPress={openDrawer}>
-            <Text style={s.title}>{currentFolderLabel}</Text>
-            <Ionicons name="chevron-down" size={16} color="#000" style={{ marginLeft: 3 }} />
-          </TouchableOpacity>
-          <View style={s.headerRight}>
-            {syncing && <ActivityIndicator size="small" color="#007AFF" style={{ marginRight: 8 }} />}
-            <TouchableOpacity style={s.iconBtn} onPress={() => setSearchVisible(v => !v)}>
-              <Ionicons name={searchVisible ? 'close' : 'search'} size={22} color="#007AFF" />
+      <SafeAreaView style={{ flex: 1, backgroundColor: '#f2f2f7' }} edges={['top']}>
+        {/* ─── ヘッダー リキッドグラスバー ─── */}
+        <BlurView intensity={72} tint="light" style={s.header}>
+          <View style={s.headerInner}>
+            <TouchableOpacity style={s.menuBtn} onPress={openDrawer}>
+              <Ionicons name="menu" size={24} color="#1C1C1E" />
             </TouchableOpacity>
+            <TouchableOpacity style={s.titleBtn} onPress={openDrawer}>
+              <Text style={s.title}>{currentFolderLabel}</Text>
+              <Ionicons name="chevron-down" size={15} color="#1C1C1E" style={{ marginLeft: 3 }} />
+            </TouchableOpacity>
+            <View style={s.headerRight}>
+              {syncing && <ActivityIndicator size="small" color="#007AFF" style={{ marginRight: 6 }} />}
+              {/* 検索ボタン（右側 pill） */}
+              <BlurView intensity={55} tint="light" style={s.searchPill}>
+                <TouchableOpacity
+                  style={s.searchPillBtn}
+                  onPress={() => setSearchVisible(v => !v)}
+                >
+                  <Ionicons name={searchVisible ? 'close' : 'search'} size={18} color="#007AFF" />
+                </TouchableOpacity>
+              </BlurView>
+            </View>
           </View>
-        </View>
+        </BlurView>
 
         {selectedAccount && (
           <Text style={s.accountLabel}>{selectedAccount.email}</Text>
@@ -381,16 +390,39 @@ function DrawerContent({
 
 const s = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#fff' },
+  // ─── ヘッダー リキッドグラス ───
   header: {
-    flexDirection: 'row', alignItems: 'center',
-    paddingHorizontal: 6, paddingVertical: 10,
-    borderBottomWidth: 0.5, borderBottomColor: '#E5E5EA',
+    borderBottomWidth: 0.5,
+    borderBottomColor: 'rgba(255,255,255,0.45)',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.07,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  headerInner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 8,
+    paddingVertical: 10,
+    backgroundColor: 'rgba(255,255,255,0.25)',
   },
   menuBtn: { padding: 8 },
   titleBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 4 },
-  title: { fontSize: 20, fontWeight: '700', color: '#000' },
+  title: { fontSize: 20, fontWeight: '700', color: '#1C1C1E' },
   headerRight: { flexDirection: 'row', alignItems: 'center' },
-  iconBtn: { padding: 8 },
+  // 検索ボタン pill
+  searchPill: {
+    borderRadius: 18,
+    overflow: 'hidden',
+    borderWidth: 0.5,
+    borderColor: 'rgba(255,255,255,0.6)',
+  },
+  searchPillBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    backgroundColor: 'rgba(255,255,255,0.3)',
+  },
   accountLabel: { fontSize: 12, color: '#8E8E93', paddingHorizontal: 18, paddingBottom: 6, paddingTop: 2 },
   searchBar: {
     flexDirection: 'row', alignItems: 'center',

@@ -201,14 +201,16 @@ export default function EmailDetailScreen() {
   return (
     <SafeAreaView style={s.container} edges={['top']}>
 
-      {/* ─── ヘッダー ─── */}
-      <View style={s.header}>
-        <TouchableOpacity style={s.backBtn} onPress={() => router.back()}>
-          <Ionicons name="chevron-back" size={26} color="#007AFF" />
-        </TouchableOpacity>
-        {/* リキッドグラス pill ─ 右ボタン群 */}
-        <BlurView intensity={60} tint="light" style={s.headerGlassPill}>
-          <View style={s.headerGlassInner}>
+      {/* ─── ヘッダー（リキッドグラス バー全体） ─── */}
+      <BlurView intensity={72} tint="light" style={s.header}>
+        <View style={s.headerInner}>
+          {/* 戻るボタン */}
+          <TouchableOpacity style={s.backBtn} onPress={() => router.back()}>
+            <Ionicons name="chevron-back" size={26} color="#007AFF" />
+          </TouchableOpacity>
+
+          {/* 右側 pill ボタン群 */}
+          <View style={s.headerPill}>
             <TouchableOpacity style={s.glassBtn} onPress={handleStar}>
               <Ionicons
                 name={email.isStarred ? 'bookmark' : 'bookmark-outline'}
@@ -225,8 +227,8 @@ export default function EmailDetailScreen() {
               <Ionicons name="person-add-outline" size={20} color="#3C3C43" />
             </TouchableOpacity>
           </View>
-        </BlurView>
-      </View>
+        </View>
+      </BlurView>
 
       {/* ─── 件名 ─── */}
       <View style={s.subjectArea}>
@@ -499,33 +501,40 @@ export default function EmailDetailScreen() {
 
 const s = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#fff' },
+  // ─── ヘッダー リキッドグラスバー ───
   header: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingHorizontal: 8, paddingVertical: 8,
-    borderBottomWidth: 0.5, borderBottomColor: '#E5E5EA',
-  },
-  backBtn: { padding: 4 },
-  // ─── ヘッダー右側 リキッドグラス pill ───
-  headerGlassPill: {
-    borderRadius: 22,
-    overflow: 'hidden',
-    borderWidth: 0.5,
-    borderColor: 'rgba(255,255,255,0.6)',
+    borderBottomWidth: 0.5,
+    borderBottomColor: 'rgba(255,255,255,0.45)',
+    // 下側シャドウで浮遊感
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.10,
-    shadowRadius: 12,
-    elevation: 6,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.07,
+    shadowRadius: 8,
+    elevation: 4,
   },
-  headerGlassInner: {
+  headerInner: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(255,255,255,0.3)',
-    paddingVertical: 2,
+    justifyContent: 'space-between',
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    backgroundColor: 'rgba(255,255,255,0.25)',
+  },
+  backBtn: { padding: 4 },
+  // 右側 pill
+  headerPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.35)',
+    borderRadius: 22,
+    borderWidth: 0.5,
+    borderColor: 'rgba(255,255,255,0.65)',
+    overflow: 'hidden',
     paddingHorizontal: 2,
+    paddingVertical: 2,
   },
   glassBtn: {
-    paddingHorizontal: 12, paddingVertical: 9,
+    paddingHorizontal: 12, paddingVertical: 8,
   },
   glassDivider: {
     width: 0.5, height: 16,
