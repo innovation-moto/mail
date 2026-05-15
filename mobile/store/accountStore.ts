@@ -5,11 +5,13 @@ import type { Account } from '@/shared/types';
 const ACCOUNTS_KEY = 'im_mail_accounts';
 const PASSWORDS_KEY_PREFIX = 'im_mail_pwd_';
 const SELECTED_KEY = 'im_mail_selected_account';
+const OPENAI_KEY = 'im_mail_openai_key';
 
 interface AccountStore {
   accounts: Account[];
   selectedAccountId: string | null;
   initialized: boolean;
+  openAiKey: string | null;
 
   init(): Promise<void>;
   addAccount(account: Account, password: string): Promise<void>;
@@ -17,12 +19,15 @@ interface AccountStore {
   selectAccount(id: string): Promise<void>;
   getPassword(accountId: string): Promise<string | null>;
   getSelectedAccount(): Account | null;
+  saveOpenAiKey(key: string): Promise<void>;
+  clearOpenAiKey(): Promise<void>;
 }
 
 export const useAccountStore = create<AccountStore>((set, get) => ({
   accounts: [],
   selectedAccountId: null,
   initialized: false,
+  openAiKey: null,
 
   async init() {
     try {
@@ -34,9 +39,11 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
         ? selectedId
         : (accounts[0]?.id ?? null);
 
-      set({ accounts, selectedAccountId, initialized: true });
+      const openAiKey = await SecureStore.getItemAsync(OPENAI_KEY);
+
+      set({ accounts, selectedAccountId, initialized: true, openAiKey });
     } catch {
-      set({ accounts: [], selectedAccountId: null, initialized: true });
+      set({ accounts: [], selectedAccountId: null, initialized: true, openAiKey: null });
     }
   },
 
@@ -91,5 +98,15 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
   getSelectedAccount(): Account | null {
     const { accounts, selectedAccountId } = get();
     return accounts.find((a) => a.id === selectedAccountId) ?? null;
+  },
+
+  async saveOpenAiKey(key: string) {
+    await SecureStore.setItemAsync(OPENAI_KEY, key);
+    set({ openAiKey: key });
+  },
+
+  async clearOpenAiKey() {
+    await SecureStore.deleteItemAsync(OPENAI_KEY);
+    set({ openAiKey: null });
   },
 }));

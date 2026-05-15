@@ -14,7 +14,7 @@ import type { Email } from '@/shared/types';
 type Mode = 'new' | 'reply' | 'replyAll' | 'forward';
 
 export default function ComposeScreen() {
-  const { mode = 'new', emailId } = useLocalSearchParams<{ mode?: Mode; emailId?: string }>();
+  const { mode = 'new', emailId, aiBody } = useLocalSearchParams<{ mode?: Mode; emailId?: string; aiBody?: string }>();
   const router = useRouter();
   const { getSelectedAccount, getPassword } = useAccountStore();
 
@@ -36,7 +36,7 @@ export default function ComposeScreen() {
       if (mode === 'reply') {
         setTo(orig.from.address);
         setSubject(`Re: ${orig.subject}`);
-        setBody(buildQuote(orig));
+        setBody(aiBody ? decodeURIComponent(aiBody) + '\n\n' + buildQuote(orig) : buildQuote(orig));
       } else if (mode === 'replyAll') {
         const toAddrs = [orig.from.address, ...orig.to.map(t=>t.address)].filter(a => a !== account?.email).join(', ');
         setTo(toAddrs);

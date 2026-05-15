@@ -1,4 +1,4 @@
-import type { Account, ComposeData, Email, Folder, TestConnectionResult } from '@/shared/types';
+import type { Account, AiSummarizeResult, AiTone, CalendarEvent, ComposeData, Email, Folder, TestConnectionResult } from '@/shared/types';
 
 const BASE_URL = (process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:3000').replace(/\/$/, '');
 
@@ -109,6 +109,47 @@ export const mailApi = {
   ): Promise<TestConnectionResult> {
     return post<TestConnectionResult>('/api/v1/accounts/test', {
       account: buildAccountPayload(account, password),
+    });
+  },
+
+  // ─── AI ───────────────────────────────────────────────────────────
+
+  /**
+   * Summarize an email with AI
+   */
+  aiSummarize(
+    apiKey: string,
+    subject: string,
+    bodyText: string,
+  ): Promise<AiSummarizeResult> {
+    return post<AiSummarizeResult>('/api/v1/ai/summarize', { apiKey, subject, bodyText });
+  },
+
+  /**
+   * Generate an AI reply draft
+   */
+  aiReply(
+    apiKey: string,
+    subject: string,
+    bodyText: string,
+    tone: AiTone,
+  ): Promise<{ reply: string }> {
+    return post<{ reply: string }>('/api/v1/ai/reply', { apiKey, subject, bodyText, tone });
+  },
+
+  /**
+   * Detect calendar events in an email
+   */
+  aiDetectEvent(
+    apiKey: string,
+    subject: string,
+    bodyText: string,
+    emailDate: number,
+    fromName: string,
+    fromAddress: string,
+  ): Promise<{ event: CalendarEvent | null }> {
+    return post<{ event: CalendarEvent | null }>('/api/v1/ai/detect-event', {
+      apiKey, subject, bodyText, emailDate, fromName, fromAddress,
     });
   },
 };
