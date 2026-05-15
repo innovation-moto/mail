@@ -64,6 +64,13 @@ function rowToEmail(row: EmailRow, attachments: Attachment[] = []): Email {
   };
 }
 
+// 仮想フォルダ名 → 実際のDBフォルダパターン（IMAP実装差異を吸収）
+const VIRTUAL_FOLDER_PATTERNS: Record<string, RegExp> = {
+  Sent:   /^(Sent|INBOX\.Sent|INBOX\.Sent Messages|Sent Items|送信済み|\[Gmail\]\/送信済みメール)$/i,
+  Drafts: /^(Drafts|INBOX\.Drafts|下書き|\[Gmail\]\/下書き)$/i,
+  Trash:  /^(Trash|INBOX\.Trash|ゴミ箱|Deleted|\[Gmail\]\/ゴミ箱)$/i,
+};
+
 export function listEmails(
   accountId: string,
   folder: string,
@@ -71,6 +78,19 @@ export function listEmails(
   offset = 0,
 ): Email[] {
   const db = getDb();
+  const pattern = VIRTUAL_FOLDER_PATTERNS[folder];
+  if (pattern) {
+    // 仮想フォルダ: 対象パターンに合致するDBフォルダをすべて検索
+    const allRows = db.prepare(`
+      SELECT * FROM emails
+      WHERE account_id = ? AND is_deleted = 0
+      ORDER BY date DESC
+    `).all(accountId) as EmailRow[];
+    const rows = allRows
+      .filter((r) => pattern.test(r.folder))
+      .slice(offset, offset + limit);
+    return rows.map((r) => rowToEmail(r));
+  }
   const rows = db.prepare(`
     SELECT * FROM emails
     WHERE account_id = ? AND folder = ? AND is_deleted = 0
