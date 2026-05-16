@@ -48,6 +48,20 @@ export default function EmailDetailScreen() {
   const [calEvent, setCalEvent] = useState<CalendarEvent | null | undefined>(undefined);
 
   const sheetAnim = useRef(new Animated.Value(0)).current;
+  const scrollY = useRef(new Animated.Value(0)).current;
+
+  // スクロール量からヘッダー表示を制御
+  const SCROLL_THRESHOLD = 80;
+  const compactHeaderOpacity = scrollY.interpolate({
+    inputRange: [SCROLL_THRESHOLD, SCROLL_THRESHOLD + 30],
+    outputRange: [0, 1],
+    extrapolate: 'clamp',
+  });
+  const floatOpacity = scrollY.interpolate({
+    inputRange: [0, SCROLL_THRESHOLD],
+    outputRange: [1, 0],
+    extrapolate: 'clamp',
+  });
 
   useEffect(() => {
     if (!id) return;
@@ -203,108 +217,184 @@ export default function EmailDetailScreen() {
     <body>${email.bodyHtml || email.bodyText.replace(/\n/g, '<br>')}</body></html>
   `;
 
-  const FLOAT_TOP = 10; // SafeAreaView edges={['top']} がセーフエリア分を処理済み
+  const FLOAT_TOP = 10;
+
+  // WebViewスクロール検知用JS
+  const scrollListenerJS = `
+    (function() {
+      var lastY = 0;
+      window.addEventListener('scroll', function() {
+        var y = window.scrollY;
+        if (Math.abs(y - lastY) > 2) {
+          lastY = y;
+          window.ReactNativeWebView.postMessage(JSON.stringify({type:'scroll', y: y}));
+        }
+      }, {passive: true});
+    })();
+    true;
+  `;
 
   return (
     <SafeAreaView style={s.container} edges={['top']}>
       <View style={{ flex: 1 }}>
 
-        {/* ─── 件名・送信者・切替（フローティングボタン高さ分のパディング） ─── */}
-        <View style={{ paddingTop: FLOAT_TOP + 52 }}>
-          {/* ─── 件名 ─── */}
-          <View style={s.subjectArea}>
-            <Text style={s.subject}>{email.subject || '（件名なし）'}</Text>
-          </View>
-
-      {/* ─── 送信者カード ─── */}
-      <TouchableOpacity style={s.senderCard} onPress={() => setHeaderExpanded(v => !v)} activeOpacity={0.7}>
-        <View style={s.senderAvatarWrap}>
-          <SenderAvatar fromEmail={email.from.address} fromName={email.from.name || ''} size={40} />
-        </View>
-        <View style={s.senderInfo}>
-          <Text style={s.senderName}>{senderName}</Text>
-          {headerExpanded ? (
-            <View>
-              <Text style={s.senderSub}>{email.from.address}</Text>
-              {toList ? <Text style={s.senderSub}>宛先: {toList}</Text> : null}
-              {email.cc?.length > 0 && (
-                <Text style={s.senderSub}>CC: {email.cc.map(c => c.name || c.address).join(', ')}</Text>
-              )}
+        {/* ─── コンテンツ（テキスト or WebView） ─── */}
+        {showHtml && email.bodyHtml ? (
+          /* HTML メール: メタ情報を上に固定、WebView が残りを占める */
+          <View style={{ flex: 1, paddingTop: FLOAT_TOP + 52 }}>
+            {/* 件名・送信者 */}
+            <View style={s.subjectArea}>
+              <Text style={s.subject}>{email.subject || '（件名なし）'}</Text>
             </View>
-          ) : (
-            <Text style={s.senderSub} numberOfLines={1}>宛先: {toList || 'あなた'}</Text>
-          )}
-        </View>
-        <View style={s.senderRight}>
-          <Text style={s.senderDate}>{formatFullDate(email.date)}</Text>
-          <Ionicons name={headerExpanded ? 'chevron-up' : 'chevron-down'} size={14} color="#8E8E93" />
-        </View>
-      </TouchableOpacity>
-
-          {/* ─── テキスト/HTML切替 ─── */}
-          {email.bodyHtml && email.bodyText && (
-            <View style={s.toggle}>
-              <TouchableOpacity style={[s.toggleBtn, !showHtml && s.toggleActive]} onPress={() => setShowHtml(false)}>
-                <Text style={[s.toggleText, !showHtml && s.toggleActiveText]}>テキスト</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={[s.toggleBtn, showHtml && s.toggleActive]} onPress={() => setShowHtml(true)}>
-                <Text style={[s.toggleText, showHtml && s.toggleActiveText]}>HTML</Text>
-              </TouchableOpacity>
-            </View>
-          )}
-        </View>{/* /paddingTop wrapper */}
-
-        {/* ─── 本文 ─── */}
-        <View style={{ flex: 1 }}>
-          {showHtml && email.bodyHtml ? (
+            <TouchableOpacity style={s.senderCard} onPress={() => setHeaderExpanded(v => !v)} activeOpacity={0.7}>
+              <View style={s.senderAvatarWrap}>
+                <SenderAvatar fromEmail={email.from.address} fromName={email.from.name || ''} size={40} />
+              </View>
+              <View style={s.senderInfo}>
+                <Text style={s.senderName}>{senderName}</Text>
+                {headerExpanded ? (
+                  <View>
+                    <Text style={s.senderSub}>{email.from.address}</Text>
+                    {toList ? <Text style={s.senderSub}>宛先: {toList}</Text> : null}
+                    {email.cc?.length > 0 && (
+                      <Text style={s.senderSub}>CC: {email.cc.map(c => c.name || c.address).join(', ')}</Text>
+                    )}
+                  </View>
+                ) : (
+                  <Text style={s.senderSub} numberOfLines={1}>宛先: {toList || 'あなた'}</Text>
+                )}
+              </View>
+              <View style={s.senderRight}>
+                <Text style={s.senderDate}>{formatFullDate(email.date)}</Text>
+                <Ionicons name={headerExpanded ? 'chevron-up' : 'chevron-down'} size={14} color="#8E8E93" />
+              </View>
+            </TouchableOpacity>
+            {email.bodyText && (
+              <View style={s.toggle}>
+                <TouchableOpacity style={[s.toggleBtn, !showHtml && s.toggleActive]} onPress={() => setShowHtml(false)}>
+                  <Text style={[s.toggleText, !showHtml && s.toggleActiveText]}>テキスト</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={[s.toggleBtn, showHtml && s.toggleActive]} onPress={() => setShowHtml(true)}>
+                  <Text style={[s.toggleText, showHtml && s.toggleActiveText]}>HTML</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+            {/* WebView 本文 */}
             <WebView
               source={{ html: htmlContent }}
               style={{ flex: 1 }}
               scrollEnabled
               showsVerticalScrollIndicator={false}
               originWhitelist={['*']}
+              injectedJavaScript={scrollListenerJS}
+              onMessage={(e) => {
+                try {
+                  const data = JSON.parse(e.nativeEvent.data);
+                  if (data.type === 'scroll') scrollY.setValue(data.y);
+                } catch {}
+              }}
               onShouldStartLoadWithRequest={(req) => {
                 if (req.url.startsWith('about:') || req.url.startsWith('data:')) return true;
                 return false;
               }}
             />
-          ) : (
-            <ScrollView style={s.textScroll} contentContainerStyle={{ padding: 16, paddingBottom: 140 }}>
-              <Text style={s.bodyText}>{email.bodyText || '本文がありません'}</Text>
-            </ScrollView>
-          )}
-        </View>
+          </View>
+        ) : (
+          <Animated.ScrollView
+            style={{ flex: 1 }}
+            contentContainerStyle={{ paddingTop: FLOAT_TOP + 52, paddingBottom: 140 }}
+            showsVerticalScrollIndicator={false}
+            scrollEventThrottle={16}
+            onScroll={Animated.event(
+              [{ nativeEvent: { contentOffset: { y: scrollY } } }],
+              { useNativeDriver: false },
+            )}
+          >
+            <View style={s.subjectArea}>
+              <Text style={s.subject}>{email.subject || '（件名なし）'}</Text>
+            </View>
+            <TouchableOpacity style={s.senderCard} onPress={() => setHeaderExpanded(v => !v)} activeOpacity={0.7}>
+              <View style={s.senderAvatarWrap}>
+                <SenderAvatar fromEmail={email.from.address} fromName={email.from.name || ''} size={40} />
+              </View>
+              <View style={s.senderInfo}>
+                <Text style={s.senderName}>{senderName}</Text>
+                {headerExpanded ? (
+                  <View>
+                    <Text style={s.senderSub}>{email.from.address}</Text>
+                    {toList ? <Text style={s.senderSub}>宛先: {toList}</Text> : null}
+                    {email.cc?.length > 0 && (
+                      <Text style={s.senderSub}>CC: {email.cc.map(c => c.name || c.address).join(', ')}</Text>
+                    )}
+                  </View>
+                ) : (
+                  <Text style={s.senderSub} numberOfLines={1}>宛先: {toList || 'あなた'}</Text>
+                )}
+              </View>
+              <View style={s.senderRight}>
+                <Text style={s.senderDate}>{formatFullDate(email.date)}</Text>
+                <Ionicons name={headerExpanded ? 'chevron-up' : 'chevron-down'} size={14} color="#8E8E93" />
+              </View>
+            </TouchableOpacity>
+            {email.bodyHtml && email.bodyText && (
+              <View style={s.toggle}>
+                <TouchableOpacity style={[s.toggleBtn, !showHtml && s.toggleActive]} onPress={() => setShowHtml(false)}>
+                  <Text style={[s.toggleText, !showHtml && s.toggleActiveText]}>テキスト</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={[s.toggleBtn, showHtml && s.toggleActive]} onPress={() => setShowHtml(true)}>
+                  <Text style={[s.toggleText, showHtml && s.toggleActiveText]}>HTML</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+            <Text style={s.bodyText}>{email.bodyText || '本文がありません'}</Text>
+          </Animated.ScrollView>
+        )}
 
-        {/* ─── フローティング ヘッダーボタン ─── */}
-        <View style={[s.floatHeader, { top: FLOAT_TOP }]} pointerEvents="box-none">
-          {/* 左: 円形 戻るボタン */}
+        {/* ─── フローティング ヘッダーボタン（スクロールで消える） ─── */}
+        <Animated.View style={[s.floatHeader, { top: FLOAT_TOP, opacity: floatOpacity }]} pointerEvents="box-none">
           <BlurView intensity={72} tint="light" style={s.floatBack}>
-            <TouchableOpacity style={s.floatBackBtn} onPress={() => router.back()}>
+            <TouchableOpacity style={s.floatBackBtn} onPress={() => router.back()} pointerEvents="auto">
               <Ionicons name="chevron-back" size={22} color="#007AFF" />
             </TouchableOpacity>
           </BlurView>
-
-          {/* 右: pill ボタン群 */}
           <BlurView intensity={72} tint="light" style={s.floatPill}>
             <View style={s.floatPillInner}>
-              <TouchableOpacity style={s.floatBtn} onPress={handleStar}>
-                <Ionicons
-                  name={email.isStarred ? 'star' : 'star-outline'}
-                  size={19}
-                  color={email.isStarred ? '#FF9500' : '#3C3C43'}
-                />
+              <TouchableOpacity style={s.floatBtn} onPress={handleStar} pointerEvents="auto">
+                <Ionicons name={email.isStarred ? 'star' : 'star-outline'} size={19} color={email.isStarred ? '#FF9500' : '#3C3C43'} />
               </TouchableOpacity>
               <View style={s.floatDivider} />
-              <TouchableOpacity style={s.floatBtn} onPress={handleAiButton}>
+              <TouchableOpacity style={s.floatBtn} onPress={handleAiButton} pointerEvents="auto">
                 <Ionicons name="flash" size={19} color={openAiKey ? '#007AFF' : '#C7C7CC'} />
               </TouchableOpacity>
               <View style={s.floatDivider} />
-              <TouchableOpacity style={s.floatBtn} onPress={() => setFilterVisible(true)}>
+              <TouchableOpacity style={s.floatBtn} onPress={() => setFilterVisible(true)} pointerEvents="auto">
                 <Ionicons name="funnel-outline" size={19} color="#3C3C43" />
               </TouchableOpacity>
             </View>
           </BlurView>
-        </View>
+        </Animated.View>
+
+        {/* ─── コンパクトヘッダーバー（スクロールで現れる） ─── */}
+        <Animated.View style={[s.compactHeader, { opacity: compactHeaderOpacity }]} pointerEvents="box-none">
+          <BlurView intensity={80} tint="light" style={StyleSheet.absoluteFill} />
+          <View style={s.compactHeaderInner}>
+            <TouchableOpacity style={s.compactBack} onPress={() => router.back()} pointerEvents="auto">
+              <Ionicons name="chevron-back" size={22} color="#007AFF" />
+            </TouchableOpacity>
+            <Text style={s.compactTitle} numberOfLines={1}>{email.subject || '（件名なし）'}</Text>
+            <View style={s.compactActions}>
+              <TouchableOpacity style={s.compactBtn} onPress={handleStar} pointerEvents="auto">
+                <Ionicons name={email.isStarred ? 'star' : 'star-outline'} size={18} color={email.isStarred ? '#FF9500' : '#3C3C43'} />
+              </TouchableOpacity>
+              <TouchableOpacity style={s.compactBtn} onPress={handleAiButton} pointerEvents="auto">
+                <Ionicons name="flash" size={18} color={openAiKey ? '#007AFF' : '#C7C7CC'} />
+              </TouchableOpacity>
+              <TouchableOpacity style={s.compactBtn} onPress={() => setFilterVisible(true)} pointerEvents="auto">
+                <Ionicons name="funnel-outline" size={18} color="#3C3C43" />
+              </TouchableOpacity>
+            </View>
+          </View>
+        </Animated.View>
 
         {/* ─── フローティング リキッドグラス ツールバー ─── */}
       <View style={[s.toolbarWrap, { bottom: insets.bottom + 12 }]}>
@@ -875,6 +965,32 @@ const f = StyleSheet.create({
 
 const s = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#fff' },
+  backBtn: { padding: 14 },
+
+  // ─── コンパクトヘッダーバー（スクロールで現れる）───
+  compactHeader: {
+    position: 'absolute', top: 0, left: 0, right: 0,
+    height: 52, zIndex: 110, overflow: 'hidden',
+    borderBottomWidth: 0.5, borderBottomColor: 'rgba(0,0,0,0.08)',
+  },
+  compactHeaderInner: {
+    flex: 1, flexDirection: 'row', alignItems: 'center',
+    paddingHorizontal: 6,
+  },
+  compactBack: {
+    width: 40, height: 52, justifyContent: 'center', alignItems: 'center',
+  },
+  compactTitle: {
+    flex: 1, fontSize: 15, fontWeight: '600', color: '#000',
+    marginHorizontal: 4,
+  },
+  compactActions: {
+    flexDirection: 'row', alignItems: 'center',
+  },
+  compactBtn: {
+    width: 38, height: 52, justifyContent: 'center', alignItems: 'center',
+  },
+
   // ─── フローティングヘッダーボタン ───
   floatHeader: {
     position: 'absolute', left: 14, right: 14,
