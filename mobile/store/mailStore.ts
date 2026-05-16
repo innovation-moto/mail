@@ -12,6 +12,7 @@ import {
   applyFilterRules,
 } from '../lib/db';
 import { useAccountStore } from './accountStore';
+import { showNewMailNotification, setBadgeCount } from '../lib/notifications';
 
 interface MailStore {
   emails: Email[];
@@ -113,7 +114,11 @@ export const useMailStore = create<MailStore>((set, get) => ({
       const sinceUid = await getMaxUid(accountId, folder);
       const { emails } = await mailApi.sync(account, password, folder, sinceUid || undefined);
 
-      // Persist to SQLite, correcting the accountId to match local DB id
+      // 同期前の未読数を記録（新着検知用）
+      const beforeCounts = await getUnreadCountsByFolder(accountId);
+      const beforeInboxUnread = beforeCounts['INBOX'] ?? 0;
+
+      // Persist to SQLite
       for (const email of emails) {
         await upsertEmail({ ...email, accountId });
       }
@@ -128,6 +133,22 @@ export const useMailStore = create<MailStore>((set, get) => ({
       // フォルダ別未読数を更新
       const counts = await getUnreadCountsByFolder(accountId);
       set({ folderUnreadCounts: counts });
+
+      // 新着メール通知
+      const afterInboxUnread = counts['INBOX'] ?? 0;
+      const newCount = afterInboxUnread - beforeInboxUnread;
+      if (newCount > 0 && folder === 'INBOX') {
+        const latest = allEmails.find((e) => !e.isRead);
+        await showNewMailNotification(
+          newCount,
+          latest?.from.name || latest?.from.address || '',
+          latest?.subject || '',
+        );
+      }
+
+      // バッジ更新（全フォルダの未読合計）
+      const totalUnread = Object.values(counts).reduce((s, n) => s + n, 0);
+      await setBadgeCount(totalUnread);
     } catch (err) {
       set({ error: (err as Error).message });
     } finally {
