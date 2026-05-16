@@ -4,9 +4,12 @@ release/
 app/.next/
 app/out/
 app/node_modules/
+mobile/node_modules/
+mobile/.expo/
 *.db
 *.db-shm
 *.db-wal
 .env
 .env.local
 .DS_Store
+.vercel
