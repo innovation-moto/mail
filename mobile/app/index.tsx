@@ -273,7 +273,16 @@ export default function InboxScreen() {
         </BlurView>
 
         {selectedAccount && (
-          <Text style={s.accountLabel}>{selectedAccount.email}</Text>
+          <View style={s.accountChipRow}>
+            <View style={s.accountChip}>
+              <View style={s.accountChipAvatar}>
+                <Text style={s.accountChipAvatarText}>
+                  {(selectedAccount.name || selectedAccount.email).charAt(0).toUpperCase()}
+                </Text>
+              </View>
+              <Text style={s.accountChipEmail} numberOfLines={1}>{selectedAccount.email}</Text>
+            </View>
+          </View>
         )}
 
         {searchVisible && (
@@ -519,7 +528,21 @@ const s = StyleSheet.create({
   },
   pillBtn: { paddingHorizontal: 12, paddingVertical: 8 },
   pillDivider: { width: 0.5, height: 16, backgroundColor: 'rgba(60,60,67,0.2)' },
-  accountLabel: { fontSize: 12, color: '#8E8E93', paddingHorizontal: 18, paddingBottom: 6, paddingTop: 2 },
+  accountChipRow: { paddingHorizontal: 14, paddingTop: 6, paddingBottom: 4 },
+  accountChip: {
+    flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start',
+    backgroundColor: '#F2F2F7', borderRadius: 20,
+    paddingRight: 12, paddingVertical: 3,
+    borderWidth: 0.5, borderColor: '#E5E5EA',
+  },
+  accountChipAvatar: {
+    width: 22, height: 22, borderRadius: 11,
+    backgroundColor: '#007AFF',
+    justifyContent: 'center', alignItems: 'center',
+    marginRight: 6, marginLeft: 3,
+  },
+  accountChipAvatarText: { color: '#fff', fontSize: 11, fontWeight: '700' },
+  accountChipEmail: { fontSize: 12, color: '#3C3C43', fontWeight: '500', maxWidth: 240 },
   searchBar: {
     flexDirection: 'row', alignItems: 'center',
     margin: 10, marginTop: 6, paddingHorizontal: 12, paddingVertical: 8,
