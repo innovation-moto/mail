@@ -158,7 +158,8 @@ export default function EmailDetailScreen() {
     ]);
   };
 
-  const handleAiButton = () => {
+  // ヘッダー用: 要約のみ直接起動
+  const handleSummarizeButton = () => {
     if (!openAiKey) {
       Alert.alert(
         'AIキー未設定',
@@ -170,7 +171,7 @@ export default function EmailDetailScreen() {
       );
       return;
     }
-    openSheet('menu');
+    handleSummarize();
   };
 
   const handleSummarize = async () => {
@@ -453,7 +454,7 @@ export default function EmailDetailScreen() {
                 <Ionicons name={email.isStarred ? 'star' : 'star-outline'} size={19} color={email.isStarred ? '#FF9500' : '#3C3C43'} />
               </TouchableOpacity>
               <View style={s.floatDivider} />
-              <TouchableOpacity style={s.floatBtn} onPress={handleAiButton} pointerEvents="auto">
+              <TouchableOpacity style={s.floatBtn} onPress={handleSummarizeButton} pointerEvents="auto">
                 <Ionicons name="sparkles" size={19} color={openAiKey ? '#007AFF' : '#C7C7CC'} />
               </TouchableOpacity>
               <View style={s.floatDivider} />
@@ -476,7 +477,7 @@ export default function EmailDetailScreen() {
               <TouchableOpacity style={s.compactBtn} onPress={handleStar} pointerEvents="auto">
                 <Ionicons name={email.isStarred ? 'star' : 'star-outline'} size={18} color={email.isStarred ? '#FF9500' : '#3C3C43'} />
               </TouchableOpacity>
-              <TouchableOpacity style={s.compactBtn} onPress={handleAiButton} pointerEvents="auto">
+              <TouchableOpacity style={s.compactBtn} onPress={handleSummarizeButton} pointerEvents="auto">
                 <Ionicons name="sparkles" size={18} color={openAiKey ? '#007AFF' : '#C7C7CC'} />
               </TouchableOpacity>
               <TouchableOpacity style={s.compactBtn} onPress={() => setFilterVisible(true)} pointerEvents="auto">
