@@ -203,14 +203,14 @@ export default function EmailDetailScreen() {
     <body>${email.bodyHtml || email.bodyText.replace(/\n/g, '<br>')}</body></html>
   `;
 
-  const FLOAT_TOP = insets.top + 10;
+  const FLOAT_TOP = 10; // SafeAreaView edges={['top']} がセーフエリア分を処理済み
 
   return (
     <SafeAreaView style={s.container} edges={['top']}>
       <View style={{ flex: 1 }}>
 
-        {/* ─── 件名・送信者・切替（フローティングヘッダーの下にパディング） ─── */}
-        <View style={{ paddingTop: FLOAT_TOP + 48 }}>
+        {/* ─── 件名・送信者・切替（フローティングボタン高さ分のパディング） ─── */}
+        <View style={{ paddingTop: FLOAT_TOP + 52 }}>
           {/* ─── 件名 ─── */}
           <View style={s.subjectArea}>
             <Text style={s.subject}>{email.subject || '（件名なし）'}</Text>
@@ -884,24 +884,24 @@ const s = StyleSheet.create({
   floatBack: {
     width: 38, height: 38, borderRadius: 19,
     overflow: 'hidden',
-    shadowColor: '#000', shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.12, shadowRadius: 8, elevation: 4,
-    borderWidth: 0.5, borderColor: 'rgba(255,255,255,0.6)',
+    shadowColor: '#000', shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.18, shadowRadius: 16, elevation: 10,
+    borderWidth: 0.5, borderColor: 'rgba(255,255,255,0.7)',
   },
   floatBackBtn: {
     width: 38, height: 38, borderRadius: 19,
-    backgroundColor: 'rgba(255,255,255,0.3)',
+    backgroundColor: 'rgba(255,255,255,0.45)',
     justifyContent: 'center', alignItems: 'center',
   },
   floatPill: {
     borderRadius: 22, overflow: 'hidden',
-    shadowColor: '#000', shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.12, shadowRadius: 8, elevation: 4,
-    borderWidth: 0.5, borderColor: 'rgba(255,255,255,0.6)',
+    shadowColor: '#000', shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.18, shadowRadius: 16, elevation: 10,
+    borderWidth: 0.5, borderColor: 'rgba(255,255,255,0.7)',
   },
   floatPillInner: {
     flexDirection: 'row', alignItems: 'center',
-    backgroundColor: 'rgba(255,255,255,0.3)',
+    backgroundColor: 'rgba(255,255,255,0.45)',
     paddingHorizontal: 2, paddingVertical: 2,
   },
   floatBtn: { paddingHorizontal: 13, paddingVertical: 9 },
