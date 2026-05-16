@@ -51,6 +51,19 @@ function getInitials(name: string, email: string): string {
   return email[0]?.toUpperCase() ?? '?';
 }
 
+// 全員に返信アイコン（矢印2つを重ねて表示）
+function ReplyAllIcon({ size, color }: { size: number; color: string }) {
+  const s = size * 0.78;
+  return (
+    <View style={{ width: size, height: size }}>
+      <Ionicons name="arrow-undo-outline" size={s} color={color}
+        style={{ position: 'absolute', left: size * 0.18, top: 0 }} />
+      <Ionicons name="arrow-undo-outline" size={s} color={color}
+        style={{ position: 'absolute', left: 0, top: size * 0.22 }} />
+    </View>
+  );
+}
+
 type AiSheet = 'menu' | 'summary' | 'reply' | 'event' | null;
 
 export default function EmailDetailScreen() {
@@ -480,7 +493,7 @@ export default function EmailDetailScreen() {
             <View style={s.toolbarDivider} />
             {/* 全員に返信 */}
             <TouchableOpacity style={s.toolbarBtn} onPress={() => router.push(`/compose?mode=replyAll&emailId=${email.id}`)}>
-              <Ionicons name="arrow-undo" size={22} color="#3C3C43" />
+              <ReplyAllIcon size={22} color="#3C3C43" />
             </TouchableOpacity>
             <View style={s.toolbarDivider} />
             {/* 転送 */}
