@@ -51,15 +51,19 @@ function getInitials(name: string, email: string): string {
   return email[0]?.toUpperCase() ?? '?';
 }
 
-// 全員に返信アイコン（矢印2つを重ねて表示）
+// 全員に返信アイコン（返信矢印＋右上に「+」バッジ）
 function ReplyAllIcon({ size, color }: { size: number; color: string }) {
-  const s = size * 0.78;
   return (
     <View style={{ width: size, height: size }}>
-      <Ionicons name="arrow-undo-outline" size={s} color={color}
-        style={{ position: 'absolute', left: size * 0.18, top: 0 }} />
-      <Ionicons name="arrow-undo-outline" size={s} color={color}
-        style={{ position: 'absolute', left: 0, top: size * 0.22 }} />
+      <Ionicons name="arrow-undo-outline" size={size} color={color} />
+      <View style={{
+        position: 'absolute', right: -1, top: -1,
+        backgroundColor: color, borderRadius: 5,
+        width: 10, height: 10,
+        justifyContent: 'center', alignItems: 'center',
+      }}>
+        <Text style={{ color: '#fff', fontSize: 8, fontWeight: '800', lineHeight: 10 }}>+</Text>
+      </View>
     </View>
   );
 }
