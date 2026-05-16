@@ -103,8 +103,8 @@ export default function InboxScreen() {
 
   const { accounts, selectedAccountId, selectAccount, initialized } = useAccountStore();
   const {
-    emails, folders, folderUnreadCounts, selectedFolder, senderFilter, loading, syncing, error,
-    loadEmails, syncEmails, loadFolders, setFolder, refreshUnreadCounts, setSenderFilter,
+    emails, folders, folderUnreadCounts, selectedFolder, loading, syncing, error,
+    loadEmails, syncEmails, loadFolders, setFolder, refreshUnreadCounts,
     markRead,
   } = useMailStore();
 
@@ -133,21 +133,14 @@ export default function InboxScreen() {
     return FALLBACK_FOLDERS.find(f => f.path === selectedFolder)?.name ?? selectedFolder;
   })();
 
-  const displayEmails = (() => {
-    let list = emails;
-    if (senderFilter) {
-      list = list.filter(e => e.from.address === senderFilter);
-    }
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase();
-      list = list.filter(e =>
-        e.subject.toLowerCase().includes(q) ||
-        (e.from.name || e.from.address).toLowerCase().includes(q) ||
-        e.bodyText.toLowerCase().includes(q),
-      );
-    }
-    return list;
-  })();
+  const displayEmails = searchQuery.trim()
+    ? emails.filter(e => {
+        const q = searchQuery.toLowerCase();
+        return e.subject.toLowerCase().includes(q) ||
+          (e.from.name || e.from.address).toLowerCase().includes(q) ||
+          e.bodyText.toLowerCase().includes(q);
+      })
+    : emails;
 
   const sections = groupByDate(displayEmails);
 
@@ -302,15 +295,6 @@ export default function InboxScreen() {
           <View style={s.errorBanner}><Text style={s.errorText}>{error}</Text></View>
         )}
 
-        {senderFilter && (
-          <View style={s.filterBanner}>
-            <Ionicons name="funnel" size={13} color="#007AFF" style={{ marginRight: 5 }} />
-            <Text style={s.filterText} numberOfLines={1}>{senderFilter}</Text>
-            <TouchableOpacity style={s.filterClose} onPress={() => setSenderFilter(null)}>
-              <Ionicons name="close-circle" size={16} color="#8E8E93" />
-            </TouchableOpacity>
-          </View>
-        )}
 
         {loading && emails.length === 0 ? (
           <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
@@ -538,13 +522,6 @@ const s = StyleSheet.create({
   sep: { height: 0.5, backgroundColor: '#F0F0F0', marginLeft: 26 },
   errorBanner: { backgroundColor: '#FF3B30', padding: 8, paddingHorizontal: 16 },
   errorText: { color: '#fff', fontSize: 13 },
-  filterBanner: {
-    flexDirection: 'row', alignItems: 'center',
-    backgroundColor: '#EFF6FF', paddingHorizontal: 14, paddingVertical: 7,
-    borderBottomWidth: 0.5, borderBottomColor: '#BFDBFE',
-  },
-  filterText: { flex: 1, fontSize: 13, color: '#1D4ED8', fontWeight: '500' },
-  filterClose: { padding: 2, marginLeft: 6 },
   empty: { flex: 1, justifyContent: 'center', alignItems: 'center', gap: 12, paddingHorizontal: 32 },
   emptyTitle: { fontSize: 16, fontWeight: '600', color: '#3C3C43', textAlign: 'center' },
   addBtn: { backgroundColor: '#007AFF', paddingHorizontal: 24, paddingVertical: 12, borderRadius: 10, marginTop: 4 },
