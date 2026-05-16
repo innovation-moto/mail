@@ -455,7 +455,7 @@ export default function EmailDetailScreen() {
               </TouchableOpacity>
               <View style={s.floatDivider} />
               <TouchableOpacity style={s.floatBtn} onPress={handleSummarizeButton} pointerEvents="auto">
-                <Ionicons name="sparkles" size={19} color={openAiKey ? '#007AFF' : '#C7C7CC'} />
+                <Ionicons name="document-text-outline" size={19} color={openAiKey ? '#007AFF' : '#C7C7CC'} />
               </TouchableOpacity>
               <View style={s.floatDivider} />
               <TouchableOpacity style={s.floatBtn} onPress={() => setFilterVisible(true)} pointerEvents="auto">
@@ -478,7 +478,7 @@ export default function EmailDetailScreen() {
                 <Ionicons name={email.isStarred ? 'star' : 'star-outline'} size={18} color={email.isStarred ? '#FF9500' : '#3C3C43'} />
               </TouchableOpacity>
               <TouchableOpacity style={s.compactBtn} onPress={handleSummarizeButton} pointerEvents="auto">
-                <Ionicons name="sparkles" size={18} color={openAiKey ? '#007AFF' : '#C7C7CC'} />
+                <Ionicons name="document-text-outline" size={18} color={openAiKey ? '#007AFF' : '#C7C7CC'} />
               </TouchableOpacity>
               <TouchableOpacity style={s.compactBtn} onPress={() => setFilterVisible(true)} pointerEvents="auto">
                 <Ionicons name="funnel-outline" size={18} color="#3C3C43" />
