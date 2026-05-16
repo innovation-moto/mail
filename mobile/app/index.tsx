@@ -398,7 +398,7 @@ function DrawerContent({
   return (
     <View style={[d.wrap, { paddingTop: insets.top + 4 }]}>
       {/* スクロール領域 */}
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 8 }}>
+      <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 8 }}>
         {/* ロゴ */}
         <View style={d.logoWrap}>
           <Image
@@ -481,7 +481,7 @@ function DrawerContent({
           </View>
           <Text style={d.settingsLabel}>設定</Text>
         </TouchableOpacity>
-        <View style={{ height: insets.bottom + 24 }} />
+        <View style={{ height: insets.bottom + 8 }} />
       </View>
     </View>
   );
