@@ -543,6 +543,7 @@ function QuickFilterSheet({
   const [actionStarred, setActionStarred] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [folderPickerVisible, setFolderPickerVisible] = useState(false);
 
   function updateCondition(i: number, patch: Partial<FilterCondition>) {
     setConditions(prev => prev.map((c, idx) => idx === i ? { ...c, ...patch } : c));
@@ -679,25 +680,57 @@ function QuickFilterSheet({
           <View style={f.actionCard}>
             {/* フォルダへ移動 */}
             <Text style={f.actionLabel}>フォルダへ移動</Text>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 10 }}>
-              <View style={f.pickerWrap}>
-                <TouchableOpacity
-                  style={[f.chip, actionFolder === '' && f.chipActive]}
-                  onPress={() => setActionFolder('')}
-                >
-                  <Text style={[f.chipText, actionFolder === '' && f.chipActiveText]}>移動しない</Text>
-                </TouchableOpacity>
-                {folders.map(fold => (
+            <TouchableOpacity
+              style={f.folderPicker}
+              onPress={() => setFolderPickerVisible(true)}
+            >
+              <Ionicons name="folder-outline" size={16} color="#8E8E93" style={{ marginRight: 8 }} />
+              <Text style={[f.folderPickerText, !actionFolder && { color: '#C7C7CC' }]}>
+                {actionFolder
+                  ? (folders.find(fold => fold.path === actionFolder)?.name || actionFolder)
+                  : '移動しない'}
+              </Text>
+              <Ionicons name="chevron-down" size={14} color="#C7C7CC" />
+            </TouchableOpacity>
+
+            {/* フォルダ選択モーダル */}
+            <Modal visible={folderPickerVisible} transparent animationType="fade" onRequestClose={() => setFolderPickerVisible(false)}>
+              <TouchableOpacity style={f.pickerOverlay} activeOpacity={1} onPress={() => setFolderPickerVisible(false)}>
+                <View style={f.pickerModal}>
+                  <View style={f.pickerModalHeader}>
+                    <Text style={f.pickerModalTitle}>フォルダを選択</Text>
+                    <TouchableOpacity onPress={() => setFolderPickerVisible(false)}>
+                      <Ionicons name="close" size={20} color="#8E8E93" />
+                    </TouchableOpacity>
+                  </View>
+                  {/* 移動しない */}
                   <TouchableOpacity
-                    key={fold.path}
-                    style={[f.chip, actionFolder === fold.path && f.chipActive]}
-                    onPress={() => setActionFolder(fold.path)}
+                    style={f.pickerItem}
+                    onPress={() => { setActionFolder(''); setFolderPickerVisible(false); }}
                   >
-                    <Text style={[f.chipText, actionFolder === fold.path && f.chipActiveText]}>{fold.name || fold.path}</Text>
+                    <Ionicons name="ban-outline" size={18} color="#8E8E93" style={{ marginRight: 12 }} />
+                    <Text style={[f.pickerItemText, !actionFolder && { fontWeight: '600', color: '#007AFF' }]}>移動しない</Text>
+                    {!actionFolder && <Ionicons name="checkmark" size={16} color="#007AFF" />}
                   </TouchableOpacity>
-                ))}
-              </View>
-            </ScrollView>
+                  <View style={{ height: 0.5, backgroundColor: '#F0F0F0', marginLeft: 46 }} />
+                  {folders.map((fold, i) => (
+                    <View key={fold.path}>
+                      <TouchableOpacity
+                        style={f.pickerItem}
+                        onPress={() => { setActionFolder(fold.path); setFolderPickerVisible(false); }}
+                      >
+                        <Ionicons name="folder-outline" size={18} color="#6366f1" style={{ marginRight: 12 }} />
+                        <Text style={[f.pickerItemText, actionFolder === fold.path && { fontWeight: '600', color: '#007AFF' }]}>
+                          {fold.name || fold.path}
+                        </Text>
+                        {actionFolder === fold.path && <Ionicons name="checkmark" size={16} color="#007AFF" />}
+                      </TouchableOpacity>
+                      {i < folders.length - 1 && <View style={{ height: 0.5, backgroundColor: '#F0F0F0', marginLeft: 46 }} />}
+                    </View>
+                  ))}
+                </View>
+              </TouchableOpacity>
+            </Modal>
 
             {/* 既読にする */}
             <TouchableOpacity style={f.toggle} onPress={() => setActionMarkRead(v => !v)}>
@@ -781,6 +814,34 @@ const f = StyleSheet.create({
   addCondText: { fontSize: 14, color: '#007AFF', fontWeight: '500' },
   actionCard: { backgroundColor: '#F9F9F9', borderRadius: 10, padding: 12, marginBottom: 12 },
   actionLabel: { fontSize: 12, color: '#8E8E93', fontWeight: '500', marginBottom: 6 },
+  folderPicker: {
+    flexDirection: 'row', alignItems: 'center',
+    borderWidth: 1, borderColor: '#E5E5EA', borderRadius: 10,
+    backgroundColor: '#fff', paddingHorizontal: 12, paddingVertical: 11,
+    marginBottom: 10,
+  },
+  folderPickerText: { flex: 1, fontSize: 14, color: '#000' },
+  pickerOverlay: {
+    flex: 1, backgroundColor: 'rgba(0,0,0,0.4)',
+    justifyContent: 'center', alignItems: 'center', padding: 24,
+  },
+  pickerModal: {
+    backgroundColor: '#fff', borderRadius: 14, width: '100%',
+    maxHeight: 400, overflow: 'hidden',
+    shadowColor: '#000', shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.2, shadowRadius: 20, elevation: 12,
+  },
+  pickerModalHeader: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingHorizontal: 16, paddingVertical: 14,
+    borderBottomWidth: 0.5, borderBottomColor: '#F0F0F0',
+  },
+  pickerModalTitle: { fontSize: 15, fontWeight: '600', color: '#000' },
+  pickerItem: {
+    flexDirection: 'row', alignItems: 'center',
+    paddingHorizontal: 16, paddingVertical: 14,
+  },
+  pickerItemText: { flex: 1, fontSize: 15, color: '#1C1C1E' },
   toggle: { flexDirection: 'row', alignItems: 'center', paddingVertical: 7 },
   checkbox: {
     width: 20, height: 20, borderRadius: 6,
