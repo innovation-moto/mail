@@ -512,7 +512,7 @@ const s = StyleSheet.create({
   },
   menuBtn: { padding: 8 },
   titleBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 4 },
-  title: { fontSize: 20, fontWeight: '700', color: '#1C1C1E' },
+  title: { fontSize: 17, fontWeight: '700', color: '#1C1C1E' },
   headerRight: { flexDirection: 'row', alignItems: 'center' },
   // 更新+検索 pill
   headerPill: {
