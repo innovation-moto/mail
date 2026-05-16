@@ -1146,7 +1146,7 @@ const s = StyleSheet.create({
   toggleText: { fontSize: 13, color: '#8E8E93', fontWeight: '500' },
   toggleActiveText: { color: '#000', fontWeight: '600' },
   textScroll: { flex: 1 },
-  bodyText: { fontSize: 15, color: '#1c1c1e', lineHeight: 22 },
+  bodyText: { fontSize: 15, color: '#1c1c1e', lineHeight: 22, paddingHorizontal: 16, paddingTop: 12 },
 
   // ─── フローティング リキッドグラス ツールバー ───
   toolbarWrap: {
