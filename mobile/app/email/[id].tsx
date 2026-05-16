@@ -23,6 +23,34 @@ function formatFullDate(ts: number): string {
   });
 }
 
+function escapeHtml(str: string): string {
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+const AVATAR_COLORS = [
+  '#ef4444','#f97316','#f59e0b','#eab308',
+  '#84cc16','#22c55e','#10b981','#14b8a6',
+  '#06b6d4','#0ea5e9','#3b82f6','#6366f1',
+  '#8b5cf6','#a855f7','#d946ef','#ec4899',
+];
+function getAvatarColor(email: string): string {
+  let hash = 0;
+  for (let i = 0; i < email.length; i++) hash = email.charCodeAt(i) + ((hash << 5) - hash);
+  return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length];
+}
+function getInitials(name: string, email: string): string {
+  if (name) {
+    const parts = name.trim().split(/\s+/);
+    if (parts.length >= 2) return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+    return name[0].toUpperCase();
+  }
+  return email[0]?.toUpperCase() ?? '?';
+}
+
 type AiSheet = 'menu' | 'summary' | 'reply' | 'event' | null;
 
 export default function EmailDetailScreen() {
@@ -204,17 +232,53 @@ export default function EmailDetailScreen() {
 
   const senderName = email.from.name || email.from.address;
   const toList = email.to.map(t => t.name || t.address).join(', ');
-  const htmlContent = `
+  const avatarColor = getAvatarColor(email.from.address);
+  const avatarInitials = getInitials(email.from.name || '', email.from.address);
+
+  // HTML メール用：件名・送信者情報も HTML 内に埋め込んで一体スクロール
+  const fullHtmlContent = `
     <html><head>
     <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
     <style>
-      body { font-family: -apple-system,BlinkMacSystemFont,sans-serif; font-size:16px; color:#1c1c1e; line-height:1.6; margin:0; padding:16px; word-wrap:break-word; overflow-wrap:break-word; }
-      a { color:#007AFF; }
-      img { max-width:100%; height:auto; }
-      table { max-width:100%; }
-      pre,code { white-space:pre-wrap; word-wrap:break-word; }
+      * { box-sizing: border-box; }
+      body { margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, sans-serif; font-size: 16px; color: #1c1c1e; background: #fff; word-wrap: break-word; overflow-wrap: break-word; }
+      .header-pad { height: 62px; }
+      .subject-area { padding: 14px 16px; border-bottom: 0.5px solid #F0F0F0; }
+      .subject { font-size: 20px; font-weight: 700; color: #000; line-height: 1.3; }
+      .sender-card { display: flex; align-items: flex-start; padding: 12px 16px; border-bottom: 0.5px solid #F0F0F0; gap: 10px; }
+      .avatar { width: 40px; height: 40px; border-radius: 20px; background: ${avatarColor}; display: flex; align-items: center; justify-content: center; color: white; font-size: 16px; font-weight: 700; flex-shrink: 0; }
+      .sender-info { flex: 1; min-width: 0; }
+      .sender-name { font-size: 15px; font-weight: 600; color: #000; margin-bottom: 2px; }
+      .sender-sub { font-size: 13px; color: #8E8E93; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .sender-right { text-align: right; flex-shrink: 0; }
+      .sender-date { font-size: 12px; color: #8E8E93; white-space: nowrap; }
+      .body-content { padding: 16px; line-height: 1.6; }
+      .body-content a { color: #007AFF; }
+      .body-content img { max-width: 100%; height: auto; }
+      .body-content table { max-width: 100%; }
+      .body-content pre, .body-content code { white-space: pre-wrap; word-wrap: break-word; }
+      .bottom-pad { height: 140px; }
     </style></head>
-    <body>${email.bodyHtml || email.bodyText.replace(/\n/g, '<br>')}</body></html>
+    <body>
+      <div class="header-pad"></div>
+      <div class="subject-area">
+        <div class="subject">${escapeHtml(email.subject || '（件名なし）')}</div>
+      </div>
+      <div class="sender-card">
+        <div class="avatar">${escapeHtml(avatarInitials)}</div>
+        <div class="sender-info">
+          <div class="sender-name">${escapeHtml(senderName)}</div>
+          <div class="sender-sub">宛先: ${escapeHtml(toList || 'あなた')}</div>
+        </div>
+        <div class="sender-right">
+          <div class="sender-date">${escapeHtml(formatFullDate(email.date))}</div>
+        </div>
+      </div>
+      <div class="body-content">
+        ${email.bodyHtml || email.bodyText.replace(/\n/g, '<br>')}
+      </div>
+      <div class="bottom-pad"></div>
+    </body></html>
   `;
 
   const FLOAT_TOP = 10;
@@ -240,65 +304,25 @@ export default function EmailDetailScreen() {
 
         {/* ─── コンテンツ（テキスト or WebView） ─── */}
         {showHtml && email.bodyHtml ? (
-          /* HTML メール: メタ情報を上に固定、WebView が残りを占める */
-          <View style={{ flex: 1, paddingTop: FLOAT_TOP + 52 }}>
-            {/* 件名・送信者 */}
-            <View style={s.subjectArea}>
-              <Text style={s.subject}>{email.subject || '（件名なし）'}</Text>
-            </View>
-            <TouchableOpacity style={s.senderCard} onPress={() => setHeaderExpanded(v => !v)} activeOpacity={0.7}>
-              <View style={s.senderAvatarWrap}>
-                <SenderAvatar fromEmail={email.from.address} fromName={email.from.name || ''} size={40} />
-              </View>
-              <View style={s.senderInfo}>
-                <Text style={s.senderName}>{senderName}</Text>
-                {headerExpanded ? (
-                  <View>
-                    <Text style={s.senderSub}>{email.from.address}</Text>
-                    {toList ? <Text style={s.senderSub}>宛先: {toList}</Text> : null}
-                    {email.cc?.length > 0 && (
-                      <Text style={s.senderSub}>CC: {email.cc.map(c => c.name || c.address).join(', ')}</Text>
-                    )}
-                  </View>
-                ) : (
-                  <Text style={s.senderSub} numberOfLines={1}>宛先: {toList || 'あなた'}</Text>
-                )}
-              </View>
-              <View style={s.senderRight}>
-                <Text style={s.senderDate}>{formatFullDate(email.date)}</Text>
-                <Ionicons name={headerExpanded ? 'chevron-up' : 'chevron-down'} size={14} color="#8E8E93" />
-              </View>
-            </TouchableOpacity>
-            {email.bodyText && (
-              <View style={s.toggle}>
-                <TouchableOpacity style={[s.toggleBtn, !showHtml && s.toggleActive]} onPress={() => setShowHtml(false)}>
-                  <Text style={[s.toggleText, !showHtml && s.toggleActiveText]}>テキスト</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={[s.toggleBtn, showHtml && s.toggleActive]} onPress={() => setShowHtml(true)}>
-                  <Text style={[s.toggleText, showHtml && s.toggleActiveText]}>HTML</Text>
-                </TouchableOpacity>
-              </View>
-            )}
-            {/* WebView 本文 */}
-            <WebView
-              source={{ html: htmlContent }}
-              style={{ flex: 1 }}
-              scrollEnabled
-              showsVerticalScrollIndicator={false}
-              originWhitelist={['*']}
-              injectedJavaScript={scrollListenerJS}
-              onMessage={(e) => {
-                try {
-                  const data = JSON.parse(e.nativeEvent.data);
-                  if (data.type === 'scroll') scrollY.setValue(data.y);
-                } catch {}
-              }}
-              onShouldStartLoadWithRequest={(req) => {
-                if (req.url.startsWith('about:') || req.url.startsWith('data:')) return true;
-                return false;
-              }}
-            />
-          </View>
+          /* HTML メール: 件名・送信者・本文すべてを WebView 内でスクロール */
+          <WebView
+            source={{ html: fullHtmlContent }}
+            style={{ flex: 1 }}
+            scrollEnabled
+            showsVerticalScrollIndicator={false}
+            originWhitelist={['*']}
+            injectedJavaScript={scrollListenerJS}
+            onMessage={(e) => {
+              try {
+                const data = JSON.parse(e.nativeEvent.data);
+                if (data.type === 'scroll') scrollY.setValue(data.y);
+              } catch {}
+            }}
+            onShouldStartLoadWithRequest={(req) => {
+              if (req.url.startsWith('about:') || req.url.startsWith('data:')) return true;
+              return false;
+            }}
+          />
         ) : (
           <Animated.ScrollView
             style={{ flex: 1 }}
