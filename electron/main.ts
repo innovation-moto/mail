@@ -12,8 +12,29 @@ import { startSync, stopSync, syncAllAccounts } from './services/sync';
 import { getTotalUnreadCount } from './db/queries/emails';
 import { getSetting } from './db/queries/settings';
 import { initGemini } from './services/gemini';
+import { listAccounts, getEncryptedPassword } from './db/queries/accounts';
+import { listFilters } from './db/queries/filters';
+import { pushFilterRulesToImap } from './services/filterSync';
+import { safeStorage } from 'electron';
 
 const isDev = !app.isPackaged;
+
+/** 起動時に全アカウントのフィルタールールをIMAPにpushする */
+async function pushAllFilterRulesOnStartup(): Promise<void> {
+  const accounts = listAccounts();
+  for (const account of accounts) {
+    try {
+      const enc = getEncryptedPassword(account.id);
+      if (!enc) continue;
+      const password = safeStorage.decryptString(enc);
+      const rules = listFilters(account.id);
+      if (rules.length === 0) continue;
+      await pushFilterRulesToImap(account, password, rules);
+    } catch (e) {
+      console.warn(`[filterSync] startup push failed for ${account.email}:`, (e as Error).message);
+    }
+  }
+}
 
 // Prevent unhandled promise rejections (e.g. IMAP socket timeouts) from
 // surfacing as Electron error dialogs. Log them to the console instead.
@@ -98,6 +119,8 @@ app.whenReady().then(() => {
     // Initial sync after 2 seconds
     setTimeout(() => syncAllAccounts(mainWindow ?? undefined).catch(console.error), 2000);
     startSync(mainWindow);
+    // 起動時にフィルタールールをIMAPへpush（スマホ同期用）
+    setTimeout(() => pushAllFilterRulesOnStartup(), 5000);
   }
 
   app.on('activate', () => {

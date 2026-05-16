@@ -79,8 +79,35 @@ export function updateFilter(
   db.prepare(`UPDATE filters SET ${fields.join(', ')} WHERE id = ?`).run(...values);
 }
 
+export function getFilterAccountId(id: string): string | null {
+  const row = getDb().prepare('SELECT account_id FROM filters WHERE id = ?').get(id) as { account_id: string } | undefined;
+  return row?.account_id ?? null;
+}
+
 export function deleteFilter(id: string): void {
   getDb().prepare('DELETE FROM filters WHERE id = ?').run(id);
+}
+
+export function replaceFiltersForAccount(accountId: string, rules: FilterRule[]): void {
+  const db = getDb();
+  db.prepare('DELETE FROM filters WHERE account_id = ?').run(accountId);
+  for (const rule of rules) {
+    db.prepare(`
+      INSERT OR REPLACE INTO filters
+        (id, account_id, name, conditions, condition_type,
+         action_folder, action_mark_read, action_starred, active, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      rule.id, accountId, rule.name,
+      JSON.stringify(rule.conditions),
+      rule.conditionType,
+      rule.actionFolder ?? null,
+      rule.actionMarkRead ? 1 : 0,
+      rule.actionStarred ? 1 : 0,
+      rule.active ? 1 : 0,
+      rule.createdAt,
+    );
+  }
 }
 
 export function applyFilters(
