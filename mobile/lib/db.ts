@@ -386,6 +386,8 @@ export interface FilterMatch {
  */
 export async function deduplicateInboxByMessageId(accountId: string): Promise<number> {
   const database = getDb();
+  // カスタムフォルダ（Gmailシステムフォルダ・重要・送受信系を除く）に
+  // 同じmessage_idが存在するINBOXメールを削除する
   const result = await database.runAsync(
     `DELETE FROM emails
      WHERE folder = 'INBOX'
@@ -396,6 +398,19 @@ export async function deduplicateInboxByMessageId(accountId: string): Promise<nu
          SELECT message_id FROM emails
          WHERE account_id = ?
            AND folder != 'INBOX'
+           AND folder NOT LIKE '%[Gmail]%'
+           AND folder NOT LIKE '%Gmail%'
+           AND folder NOT LIKE '%重要%'
+           AND folder NOT LIKE '%Important%'
+           AND folder NOT LIKE '%Sent%'
+           AND folder NOT LIKE '%送信%'
+           AND folder NOT LIKE '%Draft%'
+           AND folder NOT LIKE '%下書き%'
+           AND folder NOT LIKE '%Trash%'
+           AND folder NOT LIKE '%ゴミ箱%'
+           AND folder NOT LIKE '%Spam%'
+           AND folder NOT LIKE '%Junk%'
+           AND folder NOT LIKE '%迷惑%'
            AND is_deleted = 0
            AND message_id IS NOT NULL
            AND message_id != ''
