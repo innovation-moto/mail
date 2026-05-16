@@ -397,7 +397,8 @@ function DrawerContent({
 
   return (
     <View style={[d.wrap, { paddingTop: insets.top + 4 }]}>
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 20 }}>
+      {/* スクロール領域 */}
+      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 8 }}>
         {/* ロゴ */}
         <View style={d.logoWrap}>
           <Image
@@ -438,7 +439,6 @@ function DrawerContent({
         {/* フォルダ一覧（PCと同じカラーアイコン） */}
         <View style={d.folderHeader}>
           <Text style={d.sectionLabel}>フォルダ</Text>
-          {/* 更新ボタン（PCのサイドバー下部と同等） */}
           <TouchableOpacity style={d.syncBtn} onPress={onSync} disabled={syncing}>
             <Animated.View style={{ transform: [{ rotate: spinDeg }] }}>
               <Ionicons name="refresh-outline" size={16} color={syncing ? '#007AFF' : '#8E8E93'} />
@@ -449,7 +449,6 @@ function DrawerContent({
         {displayFolders.map(f => {
           const isActive = f.path === selectedFolder;
           const color = FOLDER_COLORS[f.colorKey] ?? FOLDER_COLORS.default;
-          // ローカルDBの未読数を優先、なければサーバーから取得した値
           const unread = folderUnreadCounts[f.path] ?? f.unreadCount ?? 0;
           return (
             <TouchableOpacity
@@ -457,13 +456,8 @@ function DrawerContent({
               style={[d.folderRow, isActive && d.folderRowActive]}
               onPress={() => onFolderSelect(f.path)}
             >
-              {/* カラーアイコン（PCと同じ色） */}
               <View style={[d.folderIconWrap, { backgroundColor: isActive ? color.icon : color.bg }]}>
-                <Ionicons
-                  name={f.icon}
-                  size={16}
-                  color={isActive ? '#fff' : color.icon}
-                />
+                <Ionicons name={f.icon} size={16} color={isActive ? '#fff' : color.icon} />
               </View>
               <Text style={[d.folderLabel, isActive && d.folderLabelActive]} numberOfLines={1}>
                 {f.label}
@@ -476,17 +470,19 @@ function DrawerContent({
             </TouchableOpacity>
           );
         })}
+      </ScrollView>
 
-        <View style={d.divider} />
-
-        {/* 設定 */}
-        <TouchableOpacity style={d.folderRow} onPress={onSettings}>
+      {/* 設定ボタン：常に下部に固定 */}
+      <View style={d.settingsWrap}>
+        <View style={d.settingsDivider} />
+        <TouchableOpacity style={d.settingsRow} onPress={onSettings}>
           <View style={[d.folderIconWrap, { backgroundColor: '#F2F2F7' }]}>
             <Ionicons name="settings-outline" size={16} color="#8E8E93" />
           </View>
-          <Text style={[d.folderLabel, { color: '#3C3C43' }]}>設定</Text>
+          <Text style={d.settingsLabel}>設定</Text>
         </TouchableOpacity>
-      </ScrollView>
+        <View style={{ height: insets.bottom + 8 }} />
+      </View>
     </View>
   );
 }
@@ -632,4 +628,13 @@ const d = StyleSheet.create({
   badgeActive: { backgroundColor: 'rgba(0,122,255,0.15)' },
   badgeText: { color: '#fff', fontSize: 11, fontWeight: '700' },
   badgeTextActive: { color: '#007AFF' },
+  // 設定ボタン固定エリア
+  settingsWrap: { paddingHorizontal: 0 },
+  settingsDivider: { height: 0.5, backgroundColor: '#E5E5EA', marginHorizontal: 4, marginBottom: 4 },
+  settingsRow: {
+    flexDirection: 'row', alignItems: 'center',
+    paddingVertical: 11, paddingHorizontal: 8,
+    borderRadius: 10,
+  },
+  settingsLabel: { fontSize: 15, color: '#3C3C43' },
 });
