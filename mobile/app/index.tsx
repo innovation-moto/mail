@@ -2,7 +2,7 @@ import React, { useEffect, useCallback, useState, useRef } from 'react';
 import {
   View, Text, TouchableOpacity, ActivityIndicator,
   RefreshControl, StyleSheet, Modal, Animated, Dimensions,
-  TextInput, SectionList, ScrollView,
+  TextInput, SectionList, ScrollView, Image,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BlurView } from 'expo-blur';
@@ -389,6 +389,15 @@ function DrawerContent({
   return (
     <View style={[d.wrap, { paddingTop: insets.top + 4 }]}>
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 20 }}>
+        {/* ロゴ */}
+        <View style={d.logoWrap}>
+          <Image
+            source={require('../assets/logo.png')}
+            style={d.logo}
+            resizeMode="contain"
+          />
+        </View>
+
         {/* アカウント一覧 */}
         <Text style={d.sectionLabel}>アカウント</Text>
         {accounts.map((acc: any) => (
@@ -545,6 +554,8 @@ const s = StyleSheet.create({
 
 const d = StyleSheet.create({
   wrap: { flex: 1, paddingHorizontal: 12 },
+  logoWrap: { paddingHorizontal: 8, paddingTop: 8, paddingBottom: 4 },
+  logo: { width: 150, height: 36 },
   sectionLabel: {
     fontSize: 11, fontWeight: '600', color: '#8E8E93',
     paddingHorizontal: 8, paddingTop: 16, paddingBottom: 4,
