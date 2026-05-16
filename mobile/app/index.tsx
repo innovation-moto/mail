@@ -481,7 +481,7 @@ function DrawerContent({
           </View>
           <Text style={d.settingsLabel}>設定</Text>
         </TouchableOpacity>
-        <View style={{ height: insets.bottom + 8 }} />
+        <View style={{ height: insets.bottom + 24 }} />
       </View>
     </View>
   );
