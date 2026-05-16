@@ -152,25 +152,11 @@ export default function InboxScreen() {
     refreshUnreadCounts(selectedAccountId);
   }, [initialized, selectedAccountId, selectedFolder]);
 
-  // 送信済みフォルダのパスを取得するヘルパー
-  const sentFolderPath = React.useMemo(() => {
-    const f = folders.find(f => {
-      const su = (f.specialUse ?? '').toLowerCase();
-      const p = f.path.toLowerCase();
-      return su === '\\sent' || p.includes('sent') || p.includes('送信');
-    });
-    return f?.path ?? null;
-  }, [folders]);
-
-  // 複数フォルダをまとめて同期
+  // 現在のフォルダのみ同期（送信済みなど他フォルダはsyncAllFoldersに任せる）
   const syncRelevantFolders = React.useCallback((currentFolder: string) => {
     if (!selectedAccountId) return;
     syncEmails(selectedAccountId, currentFolder);
-    // 送信済みフォルダも常にバックグラウンド同期（現在のフォルダと異なる場合）
-    if (sentFolderPath && sentFolderPath !== currentFolder) {
-      syncEmails(selectedAccountId, sentFolderPath);
-    }
-  }, [selectedAccountId, sentFolderPath, syncEmails]);
+  }, [selectedAccountId, syncEmails]);
 
   // 30秒ごと：現在のフォルダ＋送信済みを同期（高頻度・軽量）
   useEffect(() => {
@@ -181,28 +167,28 @@ export default function InboxScreen() {
     return () => clearInterval(timer);
   }, [initialized, selectedAccountId, selectedFolder, syncRelevantFolders]);
 
-  // 5分ごと：全フォルダをバックグラウンド同期（バッジ数をMacと揃える）
+  // 5分ごと：全アカウントの全フォルダをバックグラウンド同期（バッジ数をMacと揃える）
   useEffect(() => {
-    if (!initialized || !selectedAccountId) return;
-    // 起動直後にも1回実行
-    syncAllFolders(selectedAccountId);
+    if (!initialized || accounts.length === 0) return;
+    // 起動直後にも全アカウント実行
+    for (const acc of accounts) syncAllFolders(acc.id);
     const timer = setInterval(() => {
-      syncAllFolders(selectedAccountId);
+      for (const acc of accounts) syncAllFolders(acc.id);
     }, 5 * 60_000);
     return () => clearInterval(timer);
-  }, [initialized, selectedAccountId]);
+  }, [initialized, accounts]);
 
-  // アプリがフォアグラウンドに戻ったとき：現在フォルダを即同期＋全フォルダ同期
+  // アプリがフォアグラウンドに戻ったとき：現在フォルダを即同期＋全アカウント同期
   useEffect(() => {
-    if (!initialized || !selectedAccountId) return;
+    if (!initialized || accounts.length === 0) return;
     const sub = AppState.addEventListener('change', (nextState: AppStateStatus) => {
       if (nextState === 'active') {
         syncRelevantFolders(selectedFolder);
-        syncAllFolders(selectedAccountId);
+        for (const acc of accounts) syncAllFolders(acc.id);
       }
     });
     return () => sub.remove();
-  }, [initialized, selectedAccountId, selectedFolder, syncRelevantFolders]);
+  }, [initialized, accounts, selectedFolder, syncRelevantFolders]);
 
   const openDrawer = () => {
     setDrawerOpen(true);
@@ -442,6 +428,8 @@ function DrawerContent({
             if (p === '[gmail]') return false;
             // すべてのメール（All Mail）は非表示
             if (su === '\\allmail' || p.includes('all mail') || p.includes('allmail') || p.includes('すべてのメール')) return false;
+            // 重要（Important）は非表示（INBOXと内容が重複するため）
+            if (su === '\\important' || p.includes('重要') || p.includes('important')) return false;
             return true;
           })
           .map(f => {

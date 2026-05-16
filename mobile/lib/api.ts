@@ -169,6 +169,18 @@ export const mailApi = {
   },
 
   /**
+   * IMAPに保存されたフィルタールールを取得（Mac→スマホ同期用）
+   */
+  filterPull(
+    account: Account,
+    password: string,
+  ): Promise<{ rules: import('@/shared/types').FilterRule[] }> {
+    return post<{ rules: import('@/shared/types').FilterRule[] }>('/api/v1/filters/sync', {
+      account: buildAccountPayload(account, password),
+    });
+  },
+
+  /**
    * Detect calendar events in an email
    */
   aiDetectEvent(

@@ -290,6 +290,8 @@ export async function getUnreadCountsByFolder(
        AND folder NOT LIKE '%迷惑%'
        AND folder NOT LIKE '%Spam%'
        AND folder NOT LIKE '%Junk%'
+       AND folder NOT LIKE '%重要%'
+       AND folder NOT LIKE '%Important%'
      GROUP BY folder`,
     [accountId],
   );
@@ -372,6 +374,34 @@ export interface FilterMatch {
   toFolder: string | null;
   markRead: boolean;
   starred: boolean;
+}
+
+/**
+ * IMAPから取得したフィルタールールでローカルを上書き同期する
+ * accountIdは現在のデバイスのIDに置き換えて保存する
+ */
+export async function replaceFilterRules(accountId: string, rules: FilterRule[]): Promise<void> {
+  const database = getDb();
+  await database.runAsync('DELETE FROM filters WHERE account_id = ?', [accountId]);
+  for (const rule of rules) {
+    await database.runAsync(
+      `INSERT OR REPLACE INTO filters
+         (id, account_id, name, conditions, condition_type,
+          action_folder, action_mark_read, action_starred, active, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        rule.id, accountId, rule.name,
+        JSON.stringify(rule.conditions),
+        rule.conditionType,
+        rule.actionFolder ?? null,
+        rule.actionMarkRead ? 1 : 0,
+        rule.actionStarred ? 1 : 0,
+        rule.active ? 1 : 0,
+        rule.createdAt,
+      ],
+    );
+  }
+  console.log(`[filterSync] replaced ${rules.length} filter rules for account ${accountId}`);
 }
 
 /** フィルタールールを適用してローカルDBを更新し、IMAP移動が必要なものを返す */
