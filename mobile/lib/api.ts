@@ -112,6 +112,22 @@ export const mailApi = {
     });
   },
 
+  // ─── フォルダ管理 ─────────────────────────────────────────────────
+
+  folderCreate(account: Account, password: string, folderPath: string): Promise<{ ok: boolean }> {
+    return post<{ ok: boolean }>('/api/v1/mail/folder-create', {
+      account: buildAccountPayload(account, password),
+      folderPath,
+    });
+  },
+
+  folderDelete(account: Account, password: string, folderPath: string): Promise<{ ok: boolean }> {
+    return post<{ ok: boolean }>('/api/v1/mail/folder-delete', {
+      account: buildAccountPayload(account, password),
+      folderPath,
+    });
+  },
+
   // ─── AI ───────────────────────────────────────────────────────────
 
   /**

@@ -1,5 +1,5 @@
 import * as SQLite from 'expo-sqlite';
-import type { Email, EmailAddress, FilterRule, FilterCondition } from '@/shared/types';
+import type { Email, EmailAddress, FilterRule, FilterCondition, Signature } from '@/shared/types';
 
 let db: SQLite.SQLiteDatabase | null = null;
 
@@ -61,6 +61,23 @@ export async function initDb(): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_emails_account_folder ON emails(account_id, folder);
     CREATE INDEX IF NOT EXISTS idx_emails_date ON emails(date DESC);
     CREATE INDEX IF NOT EXISTS idx_emails_read ON emails(is_read);
+
+    CREATE TABLE IF NOT EXISTS signatures (
+      id TEXT PRIMARY KEY,
+      account_id TEXT,
+      name TEXT NOT NULL DEFAULT '',
+      content TEXT NOT NULL DEFAULT '',
+      is_default INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS block_list (
+      id TEXT PRIMARY KEY,
+      account_id TEXT NOT NULL,
+      email TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      UNIQUE(account_id, email)
+    );
 
     CREATE TABLE IF NOT EXISTS filter_rules (
       id TEXT PRIMARY KEY,
@@ -360,4 +377,78 @@ export async function applyFilterRules(accountId: string): Promise<void> {
       }
     }
   }
+}
+
+// ─── 署名 ──────────────────────────────────────────────────────────
+
+export async function listSignatures(accountId?: string): Promise<Signature[]> {
+  const database = getDb();
+  const rows = await database.getAllAsync<Record<string, unknown>>(
+    accountId
+      ? 'SELECT * FROM signatures WHERE account_id = ? OR account_id IS NULL ORDER BY created_at DESC'
+      : 'SELECT * FROM signatures ORDER BY created_at DESC',
+    accountId ? [accountId] : [],
+  );
+  return rows.map(r => ({
+    id: r.id as string,
+    accountId: (r.account_id as string | null) ?? undefined,
+    name: r.name as string,
+    content: r.content as string,
+    isDefault: Boolean(r.is_default),
+    createdAt: r.created_at as number,
+  }));
+}
+
+export async function createSignature(data: Omit<Signature, 'id' | 'createdAt'> & { accountId?: string | null }): Promise<Signature> {
+  const database = getDb();
+  const id = `sig_${Date.now()}`;
+  const createdAt = Date.now();
+  if (data.isDefault) {
+    await database.runAsync('UPDATE signatures SET is_default = 0 WHERE account_id = ? OR account_id IS NULL', [data.accountId ?? null]);
+  }
+  await database.runAsync(
+    'INSERT INTO signatures (id, account_id, name, content, is_default, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+    [id, data.accountId ?? null, data.name, data.content, data.isDefault ? 1 : 0, createdAt],
+  );
+  return { id, createdAt, ...data };
+}
+
+export async function updateSignature(id: string, data: Partial<Omit<Signature, 'id' | 'createdAt'>>): Promise<void> {
+  const database = getDb();
+  if (data.isDefault) {
+    await database.runAsync('UPDATE signatures SET is_default = 0');
+    await database.runAsync('UPDATE signatures SET is_default = 1 WHERE id = ?', [id]);
+  }
+  if (data.name !== undefined) await database.runAsync('UPDATE signatures SET name = ? WHERE id = ?', [data.name, id]);
+  if (data.content !== undefined) await database.runAsync('UPDATE signatures SET content = ? WHERE id = ?', [data.content, id]);
+}
+
+export async function deleteSignature(id: string): Promise<void> {
+  const database = getDb();
+  await database.runAsync('DELETE FROM signatures WHERE id = ?', [id]);
+}
+
+// ─── ブロックリスト ──────────────────────────────────────────────────
+
+export async function listBlockList(accountId: string): Promise<{ id: string; email: string; createdAt: number }[]> {
+  const database = getDb();
+  const rows = await database.getAllAsync<{ id: string; email: string; created_at: number }>(
+    'SELECT * FROM block_list WHERE account_id = ? ORDER BY created_at DESC',
+    [accountId],
+  );
+  return rows.map(r => ({ id: r.id, email: r.email, createdAt: r.created_at }));
+}
+
+export async function addToBlockList(accountId: string, email: string): Promise<void> {
+  const database = getDb();
+  const id = `bl_${Date.now()}`;
+  await database.runAsync(
+    'INSERT OR IGNORE INTO block_list (id, account_id, email, created_at) VALUES (?, ?, ?, ?)',
+    [id, accountId, email.toLowerCase().trim(), Date.now()],
+  );
+}
+
+export async function removeFromBlockList(id: string): Promise<void> {
+  const database = getDb();
+  await database.runAsync('DELETE FROM block_list WHERE id = ?', [id]);
 }
