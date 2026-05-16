@@ -301,6 +301,26 @@ export function getEmailUidsForFolder(
   }));
 }
 
+/**
+ * SQLite上では別フォルダに移動済みだが、IMAPサーバー上はまだ元フォルダにある可能性があるメールを返す。
+ * IDが `${accountId}-${uid}-${originalFolder}` 形式なので、IDに元フォルダ名が含まれ
+ * かつ現在のfolderフィールドが元フォルダと異なるものを検索する。
+ */
+export function getEmailsMovedFromFolder(
+  accountId: string,
+  originalFolder: string,
+): { uid: number; folder: string }[] {
+  const db = getDb();
+  const rows = db.prepare(`
+    SELECT uid, folder FROM emails
+    WHERE account_id = ?
+      AND id LIKE ('%' || '-' || ?)
+      AND folder != ?
+      AND is_deleted = 0
+  `).all(accountId, originalFolder, originalFolder) as { uid: number; folder: string }[];
+  return rows;
+}
+
 export function updateEmailFlags(id: string, isRead: boolean, isStarred: boolean): void {
   getDb().prepare(
     'UPDATE emails SET is_read = ?, is_starred = ? WHERE id = ?',
