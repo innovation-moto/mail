@@ -7,6 +7,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useAccountStore } from '../store/accountStore';
+import { useMailStore } from '../store/mailStore';
 import { mailApi } from '../lib/api';
 import { getEmail } from '../lib/db';
 import type { Email } from '@/shared/types';
@@ -17,6 +18,7 @@ export default function ComposeScreen() {
   const { mode = 'new', emailId, aiBody } = useLocalSearchParams<{ mode?: Mode; emailId?: string; aiBody?: string }>();
   const router = useRouter();
   const { getSelectedAccount, getPassword } = useAccountStore();
+  const { folders, syncEmails } = useMailStore();
 
   const [to, setTo] = useState('');
   const [cc, setCc] = useState('');
@@ -26,6 +28,16 @@ export default function ComposeScreen() {
   const [sending, setSending] = useState(false);
 
   const account = getSelectedAccount();
+
+  // 送信済みフォルダのパス
+  const sentFolderPath = React.useMemo(() => {
+    const f = folders.find(f => {
+      const su = (f.specialUse ?? '').toLowerCase();
+      const p = f.path.toLowerCase();
+      return su === '\\sent' || p.includes('sent') || p.includes('送信');
+    });
+    return f?.path ?? null;
+  }, [folders]);
 
   // 返信・転送時の初期値セット
   useEffect(() => {
@@ -76,6 +88,10 @@ export default function ComposeScreen() {
         bodyText: body,
         bodyHtml: '',
       });
+      // 送信後に送信済みフォルダを即座に同期
+      if (sentFolderPath) {
+        syncEmails(account.id, sentFolderPath).catch(() => {});
+      }
       router.back();
     } catch (err) {
       Alert.alert('送信エラー', (err as Error).message);

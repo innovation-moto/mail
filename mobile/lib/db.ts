@@ -243,6 +243,38 @@ export async function markDeleted(id: string): Promise<void> {
   );
 }
 
+/** フォルダ内のUID一覧を取得（フラグ同期用） */
+export async function getUidsForFolder(accountId: string, folder: string): Promise<{ uid: number; id: string; isRead: boolean; isStarred: boolean }[]> {
+  const database = getDb();
+  const rows = await database.getAllAsync<{ uid: number; id: string; is_read: number; is_starred: number }>(
+    'SELECT uid, id, is_read, is_starred FROM emails WHERE account_id = ? AND folder = ? AND is_deleted = 0',
+    [accountId, folder],
+  );
+  return rows.map(r => ({ uid: r.uid, id: r.id, isRead: Boolean(r.is_read), isStarred: Boolean(r.is_starred) }));
+}
+
+/** フラグを一括更新（既読・スター） */
+export async function updateEmailFlags(id: string, isRead: boolean, isStarred: boolean): Promise<void> {
+  const database = getDb();
+  await database.runAsync(
+    'UPDATE emails SET is_read = ?, is_starred = ? WHERE id = ?',
+    [isRead ? 1 : 0, isStarred ? 1 : 0, id],
+  );
+}
+
+/** サーバーに存在しないメールをINBOXから除外（移動・削除済み） */
+export async function removeExpungedEmails(accountId: string, folder: string, existingUids: number[]): Promise<void> {
+  if (existingUids.length === 0) return;
+  const database = getDb();
+  // existingUids に含まれないUID（サーバーから消えたメール）を is_deleted = 1 にする
+  const placeholders = existingUids.map(() => '?').join(',');
+  await database.runAsync(
+    `UPDATE emails SET is_deleted = 1
+     WHERE account_id = ? AND folder = ? AND uid NOT IN (${placeholders}) AND is_deleted = 0`,
+    [accountId, folder, ...existingUids],
+  );
+}
+
 /** フォルダごとの未読数を一括取得 */
 export async function getUnreadCountsByFolder(
   accountId: string,
@@ -252,6 +284,12 @@ export async function getUnreadCountsByFolder(
     `SELECT folder, COUNT(*) as cnt
      FROM emails
      WHERE account_id = ? AND is_read = 0 AND is_deleted = 0
+       AND folder NOT LIKE '%Trash%'
+       AND folder NOT LIKE '%ゴミ箱%'
+       AND folder NOT LIKE '%Deleted%'
+       AND folder NOT LIKE '%迷惑%'
+       AND folder NOT LIKE '%Spam%'
+       AND folder NOT LIKE '%Junk%'
      GROUP BY folder`,
     [accountId],
   );
@@ -327,16 +365,28 @@ export async function deleteFilterRule(id: string): Promise<void> {
 }
 
 /** フィルタールールをメールに適用（syncEmails 後に呼ぶ） */
-export async function applyFilterRules(accountId: string): Promise<void> {
+export interface FilterMatch {
+  emailId: string;
+  uid: number;
+  fromFolder: string;
+  toFolder: string | null;
+  markRead: boolean;
+  starred: boolean;
+}
+
+/** フィルタールールを適用してローカルDBを更新し、IMAP移動が必要なものを返す */
+export async function applyFilterRules(accountId: string): Promise<FilterMatch[]> {
   const rules = await listFilterRules(accountId);
-  if (rules.length === 0) return;
+  if (rules.length === 0) return [];
 
   const database = getDb();
   const emails = await database.getAllAsync<Record<string, unknown>>(
-    `SELECT id, from_address, to_addresses, subject, body_text, is_read, is_starred
+    `SELECT id, uid, folder, from_address, to_addresses, subject, body_text, is_read, is_starred
      FROM emails WHERE account_id = ? AND is_deleted = 0`,
     [accountId],
   );
+
+  const moves: FilterMatch[] = [];
 
   for (const email of emails) {
     for (const rule of rules) {
@@ -365,18 +415,32 @@ export async function applyFilterRules(accountId: string): Promise<void> {
 
       if (!matched) continue;
 
-      // アクション適用
+      // ローカルDB更新
       if (rule.actionMarkRead && !email.is_read) {
         await database.runAsync('UPDATE emails SET is_read = 1 WHERE id = ?', [email.id]);
       }
       if (rule.actionStarred && !email.is_starred) {
         await database.runAsync('UPDATE emails SET is_starred = 1 WHERE id = ?', [email.id]);
       }
-      if (rule.actionFolder) {
+      if (rule.actionFolder && rule.actionFolder !== (email.folder as string)) {
         await database.runAsync('UPDATE emails SET folder = ? WHERE id = ?', [rule.actionFolder, email.id]);
       }
+
+      // IMAP移動が必要な場合はリストに追加
+      moves.push({
+        emailId: email.id as string,
+        uid: email.uid as number,
+        fromFolder: email.folder as string,
+        toFolder: rule.actionFolder ?? null,
+        markRead: rule.actionMarkRead,
+        starred: rule.actionStarred,
+      });
+
+      break; // 最初にマッチしたルールのみ適用
     }
   }
+
+  return moves;
 }
 
 // ─── 署名 ──────────────────────────────────────────────────────────

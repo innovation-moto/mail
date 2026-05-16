@@ -2,7 +2,7 @@ import React, { useEffect, useCallback, useState, useRef } from 'react';
 import {
   View, Text, TouchableOpacity, ActivityIndicator,
   RefreshControl, StyleSheet, Modal, Animated, Dimensions,
-  TextInput, SectionList, ScrollView, Image,
+  TextInput, SectionList, ScrollView, Image, AppState, AppStateStatus,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BlurView } from 'expo-blur';
@@ -104,7 +104,7 @@ export default function InboxScreen() {
   const { accounts, selectedAccountId, selectAccount, initialized } = useAccountStore();
   const {
     emails, folders, folderUnreadCounts, selectedFolder, loading, syncing, error,
-    loadEmails, syncEmails, loadFolders, setFolder, refreshUnreadCounts,
+    loadEmails, syncEmails, syncAllFolders, loadFolders, setFolder, refreshUnreadCounts,
     markRead,
   } = useMailStore();
 
@@ -151,6 +151,58 @@ export default function InboxScreen() {
     syncEmails(selectedAccountId, selectedFolder);
     refreshUnreadCounts(selectedAccountId);
   }, [initialized, selectedAccountId, selectedFolder]);
+
+  // 送信済みフォルダのパスを取得するヘルパー
+  const sentFolderPath = React.useMemo(() => {
+    const f = folders.find(f => {
+      const su = (f.specialUse ?? '').toLowerCase();
+      const p = f.path.toLowerCase();
+      return su === '\\sent' || p.includes('sent') || p.includes('送信');
+    });
+    return f?.path ?? null;
+  }, [folders]);
+
+  // 複数フォルダをまとめて同期
+  const syncRelevantFolders = React.useCallback((currentFolder: string) => {
+    if (!selectedAccountId) return;
+    syncEmails(selectedAccountId, currentFolder);
+    // 送信済みフォルダも常にバックグラウンド同期（現在のフォルダと異なる場合）
+    if (sentFolderPath && sentFolderPath !== currentFolder) {
+      syncEmails(selectedAccountId, sentFolderPath);
+    }
+  }, [selectedAccountId, sentFolderPath, syncEmails]);
+
+  // 30秒ごと：現在のフォルダ＋送信済みを同期（高頻度・軽量）
+  useEffect(() => {
+    if (!initialized || !selectedAccountId) return;
+    const timer = setInterval(() => {
+      syncRelevantFolders(selectedFolder);
+    }, 30_000);
+    return () => clearInterval(timer);
+  }, [initialized, selectedAccountId, selectedFolder, syncRelevantFolders]);
+
+  // 5分ごと：全フォルダをバックグラウンド同期（バッジ数をMacと揃える）
+  useEffect(() => {
+    if (!initialized || !selectedAccountId) return;
+    // 起動直後にも1回実行
+    syncAllFolders(selectedAccountId);
+    const timer = setInterval(() => {
+      syncAllFolders(selectedAccountId);
+    }, 5 * 60_000);
+    return () => clearInterval(timer);
+  }, [initialized, selectedAccountId]);
+
+  // アプリがフォアグラウンドに戻ったとき：現在フォルダを即同期＋全フォルダ同期
+  useEffect(() => {
+    if (!initialized || !selectedAccountId) return;
+    const sub = AppState.addEventListener('change', (nextState: AppStateStatus) => {
+      if (nextState === 'active') {
+        syncRelevantFolders(selectedFolder);
+        syncAllFolders(selectedAccountId);
+      }
+    });
+    return () => sub.remove();
+  }, [initialized, selectedAccountId, selectedFolder, syncRelevantFolders]);
 
   const openDrawer = () => {
     setDrawerOpen(true);
@@ -385,8 +437,11 @@ function DrawerContent({
       ? folders
           .filter(f => {
             const p = f.path.toLowerCase();
-            // [Gmail] ネームスペース自体は除外、中のフォルダは許可
+            const su = (f.specialUse ?? '').toLowerCase();
+            // [Gmail] ネームスペース自体は除外
             if (p === '[gmail]') return false;
+            // すべてのメール（All Mail）は非表示
+            if (su === '\\allmail' || p.includes('all mail') || p.includes('allmail') || p.includes('すべてのメール')) return false;
             return true;
           })
           .map(f => {

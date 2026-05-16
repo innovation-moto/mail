@@ -105,7 +105,18 @@
       "Bash(curl -s \"http://localhost:8081/node_modules/expo-router/entry.bundle?platform=ios&dev=true&transform.engine=hermes\")",
       "Bash(pkill -f \"metro\")",
       "Bash(pkill -f \"node.*expo\")",
-      "Bash(./node_modules/.bin/tsc --noEmit)"
+      "Bash(./node_modules/.bin/tsc --noEmit)",
+      "Bash(npx vercel *)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" \"https://im-mail-azas6l9a8-motokisados-projects.vercel.app/api/v1/ai/summarize\" -X POST -H \"Content-Type: application/json\" -d '{\"apiKey\":\"test\"}')",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" \"https://im-mail-api.vercel.app/api/v1/ai/summarize\" -X POST -H \"Content-Type: application/json\" -d '{\"apiKey\":\"test\"}')",
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); deps={**d.get\\('dependencies',{}\\),**d.get\\('devDependencies',{}\\)}; [print\\(k,v\\) for k,v in deps.items\\(\\) if 'blur' in k.lower\\(\\) or 'glass' in k.lower\\(\\)]\")",
+      "Bash(curl -s -X POST \"https://im-mail-api.vercel.app/api/v1/mail/folder-create\" -H \"Content-Type: application/json\" -d '{\"folderPath\":\"test\"}')",
+      "Bash(identify /Users/innovation_sado/Sites/mail/build/icon.png)",
+      "Bash(sips -g pixelWidth -g pixelHeight /Users/innovation_sado/Sites/mail/build/icon.png)",
+      "Bash(sips -z 1024 1024 /Users/innovation_sado/Sites/mail/build/icon.png --out /Users/innovation_sado/Sites/mail/mobile/assets/icon.png)",
+      "Bash(sips -z 1024 1024 /Users/innovation_sado/Sites/mail/build/icon.png --out /Users/innovation_sado/Sites/mail/mobile/assets/adaptive-icon.png)",
+      "Bash(sips -z 1024 1024 /Users/innovation_sado/Sites/mail/build/icon.png --out /Users/innovation_sado/Sites/mail/mobile/assets/splash-icon.png)",
+      "Bash(git commit *)"
     ]
   }
 }

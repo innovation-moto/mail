@@ -154,6 +154,21 @@ export const mailApi = {
   },
 
   /**
+   * フォルダ内の既存メールのフラグ（既読・スター）と存在確認を取得
+   */
+  syncFlags(
+    account: Account,
+    password: string,
+    folder: string,
+    uids: number[],
+  ): Promise<{ flags: { uid: number; isRead: boolean; isStarred: boolean }[]; existingUids: number[] }> {
+    return post<{ flags: { uid: number; isRead: boolean; isStarred: boolean }[]; existingUids: number[] }>(
+      '/api/v1/mail/flags',
+      { account: buildAccountPayload(account, password), folder, uids },
+    );
+  },
+
+  /**
    * Detect calendar events in an email
    */
   aiDetectEvent(

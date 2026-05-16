@@ -1,7 +1,7 @@
 import { ImapFlow, MailboxLockObject } from 'imapflow';
 import { Account, Folder } from '../../shared/types';
 import { parseRawEmail, ParsedEmail } from './parser';
-import { upsertEmail, UpsertEmailData, getMaxUid, getEmailUidsForFolder, updateEmailFlags, saveAttachments } from '../db/queries/emails';
+import { upsertEmail, UpsertEmailData, getMaxUid, getEmailUidsForFolder, updateEmailFlags, saveAttachments, moveEmail, listEmails } from '../db/queries/emails';
 import { isBlocked } from '../db/queries/blocklist';
 import { applyFilters } from '../db/queries/filters';
 import { refreshMicrosoftToken, buildXOAuth2Token } from './microsoftAuth';
@@ -363,6 +363,9 @@ export async function syncAllFolders(
         let added = 0;
         let count = 0;
 
+        // フェッチ中にIMAP移動が必要なものを収集（ループ後にまとめて実行してハング回避）
+        const pendingMoves: { uid: number; toFolder: string }[] = [];
+
         // --- 新着メール取得 ---
         for await (const msg of client.fetch(fetchRange, { uid: true, flags: true, source: true }, fetchOpts)) {
           if (!msg.source) continue;
@@ -384,12 +387,42 @@ export async function syncAllFolders(
           const isRead = filterResult?.markRead ? true : (msg.flags?.has('\\Seen') ?? false);
           const isStarred = filterResult?.starred ?? false;
 
-          // サーバー側IMAP移動はハングの原因になるためスキップ
-          // DBのフォルダ割り当てのみ変更（ローカル表示上の振り分け）
+          // フィルターでフォルダ移動がある場合は後でまとめて移動
+          if (filterResult?.folder && filterResult.folder !== folder) {
+            pendingMoves.push({ uid: msg.uid, toFolder: filterResult.folder });
+          }
 
           upsertEmail({ id: `${account.id}-${msg.uid}-${folder}`, accountId: account.id, uid: msg.uid, messageId: parsed.messageId, folder: targetFolder, from: parsed.from, to: parsed.to, cc: parsed.cc, subject: parsed.subject, bodyText: parsed.bodyText, bodyHtml: parsed.bodyHtml, date: parsed.date, isRead, isStarred, hasAttachments: parsed.hasAttachments });
           if (parsed.attachments.length > 0) saveAttachments(`${account.id}-${msg.uid}-${folder}`, parsed.attachments);
           added++;
+        }
+
+        // --- 既存メールのフィルター再適用（フィルター設定前に届いたメールを救済） ---
+        if (folder === 'INBOX') {
+          const existingEmails = listEmails(account.id, folder, 500, 0);
+          for (const email of existingEmails) {
+            const filterResult = applyFilters(account.id, {
+              from: email.from.address,
+              to: email.to.map((t) => t.address).join(' '),
+              subject: email.subject,
+              body: email.bodyText,
+            });
+            if (filterResult?.folder && filterResult.folder !== folder) {
+              moveEmail(email.id, filterResult.folder);
+              pendingMoves.push({ uid: email.uid, toFolder: filterResult.folder });
+              console.log(`[filter] re-apply: uid=${email.uid} → ${filterResult.folder}`);
+            }
+          }
+        }
+
+        // --- フェッチ完了後にIMAPサーバー移動をまとめて実行 ---
+        for (const { uid, toFolder } of pendingMoves) {
+          try {
+            await client.messageMove({ uid }, toFolder, { uid: true });
+            console.log(`[filter] moved uid=${uid} → ${toFolder}`);
+          } catch (e) {
+            console.warn(`[filter] move failed uid=${uid}:`, (e as Error).message);
+          }
         }
 
         // --- フラグ同期 ---

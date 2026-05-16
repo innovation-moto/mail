@@ -5,7 +5,6 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { StatusBar } from 'expo-status-bar';
 import { useAccountStore } from '../store/accountStore';
 import { initDb } from '../lib/db';
-import { requestNotificationPermission } from '../lib/notifications';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -23,8 +22,13 @@ function AppInit({ children }: { children: React.ReactNode }) {
     (async () => {
       await initDb();
       await init();
-      // 通知権限を要求
-      await requestNotificationPermission();
+      // 通知権限を要求（失敗しても起動を止めない）
+      try {
+        const { requestNotificationPermission } = await import('../lib/notifications');
+        await requestNotificationPermission();
+      } catch (e) {
+        console.warn('[AppInit] notification permission error (ignored):', e);
+      }
     })();
   }, []);
 
