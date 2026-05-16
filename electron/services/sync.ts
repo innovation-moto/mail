@@ -57,6 +57,12 @@ export async function syncAllAccounts(win?: BrowserWindow): Promise<void> {
   if (isSyncing) return;
   isSyncing = true;
 
+  // 5分以上かかる場合はロックを強制解除（IMAP接続ハング対策）
+  const lockTimeout = setTimeout(() => {
+    console.error('[sync] Timeout: isSyncing forced reset after 5 minutes');
+    isSyncing = false;
+  }, 5 * 60 * 1000);
+
   try {
     const accounts = listAccounts();
     const settings = getAllSettings();
@@ -100,7 +106,7 @@ export async function syncAllAccounts(win?: BrowserWindow): Promise<void> {
           account,
           password,
           foldersToSync,
-          50,
+          200,
           (folder, added) => {
             // フォルダ完了のたびにUIへ通知
             if (added > 0) {
@@ -132,6 +138,7 @@ export async function syncAllAccounts(win?: BrowserWindow): Promise<void> {
       }
     }
   } finally {
+    clearTimeout(lockTimeout);
     isSyncing = false;
   }
 }

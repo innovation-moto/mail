@@ -293,10 +293,15 @@ export function getDistinctFolders(accountId: string): string[] {
 
 export function getMaxUid(accountId: string, folder: string): number {
   const db = getDb();
+  // フィルタールールで別フォルダに振り分けられたメールも含めてUIDを検索する。
+  // メールIDは "{accountId}-{uid}-{imapFolder}" 形式のため、
+  // folder='INBOX' 以外でも id が '-INBOX' で終わるものを対象にする。
   const row = db.prepare(`
     SELECT MAX(uid) as max_uid FROM emails
-    WHERE account_id = ? AND folder = ? AND is_deleted = 0
-  `).get(accountId, folder) as { max_uid: number | null };
+    WHERE account_id = ?
+      AND (folder = ? OR id LIKE ('%' || '-' || ?))
+      AND is_deleted = 0
+  `).get(accountId, folder, folder) as { max_uid: number | null };
   const result = row.max_uid ?? 0;
   console.log(`[db] getMaxUid(${folder}) = ${result}`);
   return result;
