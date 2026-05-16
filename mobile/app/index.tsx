@@ -42,7 +42,7 @@ function folderMeta(folder: Folder): FolderMeta {
   if (su === '\\drafts'  || path.includes('draft'))                         return { label: '下書き',         icon: 'document-text-outline', colorKey: 'drafts' };
   if (su === '\\trash'   || path.includes('trash') || path.includes('deleted')) return { label: 'ゴミ箱',    icon: 'trash-outline',        colorKey: 'trash' };
   if (su === '\\junk'    || path.includes('spam')  || path.includes('junk'))    return { label: '迷惑メール', icon: 'warning-outline',      colorKey: 'spam' };
-  if (su === '\\starred' || path.includes('starred') || path.includes('flagged')) return { label: 'スター付き', icon: 'star-outline',       colorKey: 'starred' };
+  if (su === '\\starred' || su === '\\flagged' || path.includes('starred') || path.includes('flagged') || path.includes('スター')) return { label: 'スター付き', icon: 'star-outline', colorKey: 'starred' };
   if (su === '\\archive' || path.includes('archive'))                        return { label: 'アーカイブ',    icon: 'archive-outline',      colorKey: 'archive' };
   if (su === '\\allmail' || path.includes('all mail') || path.includes('allmail')) return { label: 'すべてのメール', icon: 'layers-outline', colorKey: 'allmail' };
   return { label: folder.name || folder.path, icon: 'folder-outline', colorKey: 'default' };
