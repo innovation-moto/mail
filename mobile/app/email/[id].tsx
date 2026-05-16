@@ -203,45 +203,18 @@ export default function EmailDetailScreen() {
     <body>${email.bodyHtml || email.bodyText.replace(/\n/g, '<br>')}</body></html>
   `;
 
+  const FLOAT_TOP = insets.top + 10;
+
   return (
     <SafeAreaView style={s.container} edges={['top']}>
+      <View style={{ flex: 1 }}>
 
-      {/* ─── ヘッダー（リキッドグラス バー全体） ─── */}
-      <BlurView intensity={72} tint="light" style={s.header}>
-        <View style={s.headerInner}>
-          {/* 戻るボタン */}
-          <TouchableOpacity style={s.backBtn} onPress={() => router.back()}>
-            <Ionicons name="chevron-back" size={26} color="#007AFF" />
-          </TouchableOpacity>
-
-          {/* 右側 pill ボタン群 */}
-          <View style={s.headerPill}>
-            <TouchableOpacity style={s.glassBtn} onPress={handleStar}>
-              <Ionicons
-                name={email.isStarred ? 'star' : 'star-outline'}
-                size={20}
-                color={email.isStarred ? '#FF9500' : '#3C3C43'}
-              />
-            </TouchableOpacity>
-            <View style={s.glassDivider} />
-            <TouchableOpacity style={s.glassBtn} onPress={handleAiButton}>
-              <Ionicons name="flash" size={20} color={openAiKey ? '#007AFF' : '#C7C7CC'} />
-            </TouchableOpacity>
-            <View style={s.glassDivider} />
-            <TouchableOpacity
-              style={s.glassBtn}
-              onPress={() => setFilterVisible(true)}
-            >
-              <Ionicons name="funnel-outline" size={20} color="#3C3C43" />
-            </TouchableOpacity>
+        {/* ─── 件名・送信者・切替（フローティングヘッダーの下にパディング） ─── */}
+        <View style={{ paddingTop: FLOAT_TOP + 48 }}>
+          {/* ─── 件名 ─── */}
+          <View style={s.subjectArea}>
+            <Text style={s.subject}>{email.subject || '（件名なし）'}</Text>
           </View>
-        </View>
-      </BlurView>
-
-      {/* ─── 件名 ─── */}
-      <View style={s.subjectArea}>
-        <Text style={s.subject}>{email.subject || '（件名なし）'}</Text>
-      </View>
 
       {/* ─── 送信者カード ─── */}
       <TouchableOpacity style={s.senderCard} onPress={() => setHeaderExpanded(v => !v)} activeOpacity={0.7}>
@@ -268,40 +241,72 @@ export default function EmailDetailScreen() {
         </View>
       </TouchableOpacity>
 
-      {/* ─── テキスト/HTML切替 ─── */}
-      {email.bodyHtml && email.bodyText && (
-        <View style={s.toggle}>
-          <TouchableOpacity style={[s.toggleBtn, !showHtml && s.toggleActive]} onPress={() => setShowHtml(false)}>
-            <Text style={[s.toggleText, !showHtml && s.toggleActiveText]}>テキスト</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={[s.toggleBtn, showHtml && s.toggleActive]} onPress={() => setShowHtml(true)}>
-            <Text style={[s.toggleText, showHtml && s.toggleActiveText]}>HTML</Text>
-          </TouchableOpacity>
+          {/* ─── テキスト/HTML切替 ─── */}
+          {email.bodyHtml && email.bodyText && (
+            <View style={s.toggle}>
+              <TouchableOpacity style={[s.toggleBtn, !showHtml && s.toggleActive]} onPress={() => setShowHtml(false)}>
+                <Text style={[s.toggleText, !showHtml && s.toggleActiveText]}>テキスト</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[s.toggleBtn, showHtml && s.toggleActive]} onPress={() => setShowHtml(true)}>
+                <Text style={[s.toggleText, showHtml && s.toggleActiveText]}>HTML</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+        </View>{/* /paddingTop wrapper */}
+
+        {/* ─── 本文 ─── */}
+        <View style={{ flex: 1 }}>
+          {showHtml && email.bodyHtml ? (
+            <WebView
+              source={{ html: htmlContent }}
+              style={{ flex: 1 }}
+              scrollEnabled
+              showsVerticalScrollIndicator={false}
+              originWhitelist={['*']}
+              onShouldStartLoadWithRequest={(req) => {
+                if (req.url.startsWith('about:') || req.url.startsWith('data:')) return true;
+                return false;
+              }}
+            />
+          ) : (
+            <ScrollView style={s.textScroll} contentContainerStyle={{ padding: 16, paddingBottom: 140 }}>
+              <Text style={s.bodyText}>{email.bodyText || '本文がありません'}</Text>
+            </ScrollView>
+          )}
         </View>
-      )}
 
-      {/* ─── 本文 ─── */}
-      <View style={{ flex: 1 }}>
-        {showHtml && email.bodyHtml ? (
-          <WebView
-            source={{ html: htmlContent }}
-            style={{ flex: 1 }}
-            scrollEnabled
-            showsVerticalScrollIndicator={false}
-            originWhitelist={['*']}
-            onShouldStartLoadWithRequest={(req) => {
-              if (req.url.startsWith('about:') || req.url.startsWith('data:')) return true;
-              return false;
-            }}
-          />
-        ) : (
-          <ScrollView style={s.textScroll} contentContainerStyle={{ padding: 16, paddingBottom: 140 }}>
-            <Text style={s.bodyText}>{email.bodyText || '本文がありません'}</Text>
-          </ScrollView>
-        )}
-      </View>
+        {/* ─── フローティング ヘッダーボタン ─── */}
+        <View style={[s.floatHeader, { top: FLOAT_TOP }]} pointerEvents="box-none">
+          {/* 左: 円形 戻るボタン */}
+          <BlurView intensity={72} tint="light" style={s.floatBack}>
+            <TouchableOpacity style={s.floatBackBtn} onPress={() => router.back()}>
+              <Ionicons name="chevron-back" size={22} color="#007AFF" />
+            </TouchableOpacity>
+          </BlurView>
 
-      {/* ─── フローティング リキッドグラス ツールバー ─── */}
+          {/* 右: pill ボタン群 */}
+          <BlurView intensity={72} tint="light" style={s.floatPill}>
+            <View style={s.floatPillInner}>
+              <TouchableOpacity style={s.floatBtn} onPress={handleStar}>
+                <Ionicons
+                  name={email.isStarred ? 'star' : 'star-outline'}
+                  size={19}
+                  color={email.isStarred ? '#FF9500' : '#3C3C43'}
+                />
+              </TouchableOpacity>
+              <View style={s.floatDivider} />
+              <TouchableOpacity style={s.floatBtn} onPress={handleAiButton}>
+                <Ionicons name="flash" size={19} color={openAiKey ? '#007AFF' : '#C7C7CC'} />
+              </TouchableOpacity>
+              <View style={s.floatDivider} />
+              <TouchableOpacity style={s.floatBtn} onPress={() => setFilterVisible(true)}>
+                <Ionicons name="funnel-outline" size={19} color="#3C3C43" />
+              </TouchableOpacity>
+            </View>
+          </BlurView>
+        </View>
+
+        {/* ─── フローティング リキッドグラス ツールバー ─── */}
       <View style={[s.toolbarWrap, { bottom: insets.bottom + 12 }]}>
         <BlurView intensity={70} tint="light" style={s.toolbarBlur}>
           <View style={s.toolbarInner}>
@@ -340,6 +345,8 @@ export default function EmailDetailScreen() {
           </View>
         </BlurView>
       </View>
+
+      </View>{/* /flex:1 wrapper */}
 
       {/* ─── フィルター作成シート ─── */}
       {filterVisible && (
@@ -868,45 +875,37 @@ const f = StyleSheet.create({
 
 const s = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#fff' },
-  // ─── ヘッダー リキッドグラスバー ───
-  header: {
-    borderBottomWidth: 0.5,
-    borderBottomColor: 'rgba(255,255,255,0.45)',
-    // 下側シャドウで浮遊感
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.07,
-    shadowRadius: 8,
-    elevation: 4,
+  // ─── フローティングヘッダーボタン ───
+  floatHeader: {
+    position: 'absolute', left: 14, right: 14,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    zIndex: 100,
   },
-  headerInner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    backgroundColor: 'rgba(255,255,255,0.25)',
-  },
-  backBtn: { padding: 4 },
-  // 右側 pill
-  headerPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(255,255,255,0.35)',
-    borderRadius: 22,
-    borderWidth: 0.5,
-    borderColor: 'rgba(255,255,255,0.65)',
+  floatBack: {
+    width: 38, height: 38, borderRadius: 19,
     overflow: 'hidden',
-    paddingHorizontal: 2,
-    paddingVertical: 2,
+    shadowColor: '#000', shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.12, shadowRadius: 8, elevation: 4,
+    borderWidth: 0.5, borderColor: 'rgba(255,255,255,0.6)',
   },
-  glassBtn: {
-    paddingHorizontal: 12, paddingVertical: 8,
+  floatBackBtn: {
+    width: 38, height: 38, borderRadius: 19,
+    backgroundColor: 'rgba(255,255,255,0.3)',
+    justifyContent: 'center', alignItems: 'center',
   },
-  glassDivider: {
-    width: 0.5, height: 16,
-    backgroundColor: 'rgba(60,60,67,0.2)',
+  floatPill: {
+    borderRadius: 22, overflow: 'hidden',
+    shadowColor: '#000', shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.12, shadowRadius: 8, elevation: 4,
+    borderWidth: 0.5, borderColor: 'rgba(255,255,255,0.6)',
   },
+  floatPillInner: {
+    flexDirection: 'row', alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.3)',
+    paddingHorizontal: 2, paddingVertical: 2,
+  },
+  floatBtn: { paddingHorizontal: 13, paddingVertical: 9 },
+  floatDivider: { width: 0.5, height: 16, backgroundColor: 'rgba(60,60,67,0.18)' },
   subjectArea: { paddingHorizontal: 16, paddingVertical: 14, borderBottomWidth: 0.5, borderBottomColor: '#F0F0F0' },
   subject: { fontSize: 20, fontWeight: '700', color: '#000', lineHeight: 26 },
   senderCard: {
