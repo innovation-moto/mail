@@ -15,6 +15,7 @@ import {
   removeExpungedEmails,
   replaceFilterRules,
   applyFolderState,
+  deduplicateInboxByMessageId,
 } from '../lib/db';
 import { useAccountStore } from './accountStore';
 // notifications は動的インポートで読み込む（モジュールクラッシュ対策）
@@ -179,6 +180,22 @@ export const useMailStore = create<MailStore>((set, get) => ({
       } catch (e) {
         console.warn(`[syncAllFolders] ${folder}:`, (e as Error).message);
       }
+    }
+
+    // 全フォルダ同期後：同じメールがINBOXと他フォルダに重複している場合を排除
+    // （GmailラベルはIMAPで複数フォルダに同じメールが現れる）
+    try {
+      const dupes = await deduplicateInboxByMessageId(accountId);
+      if (dupes > 0) {
+        console.log(`[dedup] removed ${dupes} duplicate INBOX emails (Gmail label dedup)`);
+        // 表示中フォルダがINBOXなら再読み込み
+        if (get().selectedFolder === 'INBOX') {
+          const visibleEmails = await listEmails(accountId, 'INBOX');
+          set({ emails: visibleEmails });
+        }
+      }
+    } catch (dedupErr) {
+      console.warn('[dedup] error (ignored):', (dedupErr as Error).message);
     }
 
     // 全フォルダ完了後に未読数・バッジをまとめて更新

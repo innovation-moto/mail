@@ -381,6 +381,31 @@ export interface FilterMatch {
  * accountIdは現在のデバイスのIDに置き換えて保存する
  */
 /**
+ * 同じメール（同じmessage_id）がINBOXと他フォルダの両方に存在する場合、
+ * INBOXのレコードを削除して重複を排除する（Gmail ラベル対応）
+ */
+export async function deduplicateInboxByMessageId(accountId: string): Promise<number> {
+  const database = getDb();
+  const result = await database.runAsync(
+    `DELETE FROM emails
+     WHERE folder = 'INBOX'
+       AND account_id = ?
+       AND message_id IS NOT NULL
+       AND message_id != ''
+       AND message_id IN (
+         SELECT message_id FROM emails
+         WHERE account_id = ?
+           AND folder != 'INBOX'
+           AND is_deleted = 0
+           AND message_id IS NOT NULL
+           AND message_id != ''
+       )`,
+    [accountId, accountId],
+  );
+  return result.changes;
+}
+
+/**
  * Macのフォルダ状態スナップショットを適用する
  * state = { uid(string) → targetFolder } のマッピング
  * INBOXにあるメールが対象フォルダに移動済みの場合、ローカルDBも更新する
