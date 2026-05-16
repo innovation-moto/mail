@@ -116,7 +116,17 @@
       "Bash(sips -z 1024 1024 /Users/innovation_sado/Sites/mail/build/icon.png --out /Users/innovation_sado/Sites/mail/mobile/assets/icon.png)",
       "Bash(sips -z 1024 1024 /Users/innovation_sado/Sites/mail/build/icon.png --out /Users/innovation_sado/Sites/mail/mobile/assets/adaptive-icon.png)",
       "Bash(sips -z 1024 1024 /Users/innovation_sado/Sites/mail/build/icon.png --out /Users/innovation_sado/Sites/mail/mobile/assets/splash-icon.png)",
-      "Bash(git commit *)"
+      "Bash(git commit *)",
+      "Bash(curl -s \"https://im-mail-api.vercel.app/api/v1/mail/sync\" -X POST -H \"Content-Type: application/json\" -d '{}')",
+      "Bash(grep -v \"^$\")",
+      "Bash(echo \"Exit code: $?\")",
+      "Bash(grep -v \"^\\\\s*$\")",
+      "Bash(xargs -I{} git show {} --name-only)",
+      "Bash(xargs -I{} git log --all --oneline -- {})",
+      "Bash(grep -v \"^\\\\s*$\\\\|vercel\\\\|Vercel\\\\|Deploy\\\\|deploy\\\\|Build\\\\|build\\\\|chunk\\\\|chunks\\\\|First Load\\\\|Static\\\\|Dynamic\\\\|prerendered\\\\|server-rendered\\\\|Route\\\\|pages\\\\|ƒ\\\\|○\\\\|├\\\\|└\\\\|│\\\\|↓\\\\|▲\\\\|✓\\\\|npm\\\\|Error: Command\")",
+      "Bash(grep -v \"^\\\\s*$\\\\|vercel\\\\|Vercel\\\\|Deploy\\\\|deploy\\\\|Build\\\\|build\\\\|chunk\\\\|chunks\\\\|First Load\\\\|Static\\\\|Dynamic\\\\|prerendered\\\\|server-rendered\\\\|Route\\\\|pages\\\\|ƒ\\\\|○\\\\|├\\\\|└\\\\|│\\\\|↓\\\\|▲\\\\|✓\\\\|npm\\\\|Error: Command\\\\|\\\\\"\\\\|status\\\\|reason\\\\|message\\\\|next\\\\|when\\\\|retry\\\\|command\")",
+      "Bash(git -C /Users/innovation_sado/Sites/mail check-ignore -v app/node_modules)",
+      "Bash(echo \"Exit: $?\")"
     ]
   }
 }

@@ -14,6 +14,7 @@ import {
   updateEmailFlags,
   removeExpungedEmails,
   replaceFilterRules,
+  applyFolderState,
 } from '../lib/db';
 import { useAccountStore } from './accountStore';
 // notifications は動的インポートで読み込む（モジュールクラッシュ対策）
@@ -99,6 +100,17 @@ export const useMailStore = create<MailStore>((set, get) => ({
       }
     } catch (syncErr) {
       console.warn('[filterSync] pull failed (ignored):', (syncErr as Error).message);
+    }
+
+    // --- Macのフォルダ状態を同期（移動済みメールをINBOXから退避） ---
+    try {
+      const { state } = await mailApi.folderStatePull(account, password);
+      if (state && Object.keys(state).length > 0) {
+        const moved = await applyFolderState(accountId, state);
+        console.log(`[folderState] applied ${moved} folder moves from Mac state`);
+      }
+    } catch (stateErr) {
+      console.warn('[folderState] pull failed (ignored):', (stateErr as Error).message);
     }
 
     const beforeCounts = await getUnreadCountsByFolder(accountId);

@@ -380,12 +380,42 @@ export interface FilterMatch {
  * IMAPから取得したフィルタールールでローカルを上書き同期する
  * accountIdは現在のデバイスのIDに置き換えて保存する
  */
+/**
+ * Macのフォルダ状態スナップショットを適用する
+ * state = { uid(string) → targetFolder } のマッピング
+ * INBOXにあるメールが対象フォルダに移動済みの場合、ローカルDBも更新する
+ */
+export async function applyFolderState(
+  accountId: string,
+  state: Record<string, string>,
+): Promise<number> {
+  const database = getDb();
+  const entries = Object.entries(state);
+  if (entries.length === 0) return 0;
+
+  let moved = 0;
+  for (const [uidStr, targetFolder] of entries) {
+    const uid = Number(uidStr);
+    if (!uid || !targetFolder) continue;
+
+    // INBOXにあるメールのみ対象（既に移動済みのものは触らない）
+    const result = await database.runAsync(
+      `UPDATE emails SET folder = ?
+       WHERE account_id = ? AND uid = ? AND folder = 'INBOX' AND is_deleted = 0`,
+      [targetFolder, accountId, uid],
+    );
+    if (result.changes > 0) moved++;
+  }
+
+  return moved;
+}
+
 export async function replaceFilterRules(accountId: string, rules: FilterRule[]): Promise<void> {
   const database = getDb();
-  await database.runAsync('DELETE FROM filters WHERE account_id = ?', [accountId]);
+  await database.runAsync('DELETE FROM filter_rules WHERE account_id = ?', [accountId]);
   for (const rule of rules) {
     await database.runAsync(
-      `INSERT OR REPLACE INTO filters
+      `INSERT OR REPLACE INTO filter_rules
          (id, account_id, name, conditions, condition_type,
           action_folder, action_mark_read, action_starred, active, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,

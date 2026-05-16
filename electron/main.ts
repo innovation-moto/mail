@@ -14,7 +14,7 @@ import { getSetting } from './db/queries/settings';
 import { initGemini } from './services/gemini';
 import { listAccounts, getEncryptedPassword } from './db/queries/accounts';
 import { listFilters } from './db/queries/filters';
-import { pushFilterRulesToImap } from './services/filterSync';
+import { pushFilterRulesToImap, pushFolderStateToImap } from './services/filterSync';
 import { safeStorage } from 'electron';
 
 const isDev = !app.isPackaged;
@@ -30,6 +30,8 @@ async function pushAllFilterRulesOnStartup(): Promise<void> {
       const rules = listFilters(account.id);
       if (rules.length === 0) continue;
       await pushFilterRulesToImap(account, password, rules);
+      // フォルダ状態（移動済みメールのUID→フォルダマッピング）も同期
+      await pushFolderStateToImap(account, password, account.id);
     } catch (e) {
       console.warn(`[filterSync] startup push failed for ${account.email}:`, (e as Error).message);
     }

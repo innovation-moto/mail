@@ -181,6 +181,19 @@ export const mailApi = {
   },
 
   /**
+   * IMAPに保存されたフォルダ状態を取得（Mac→スマホ同期用）
+   * { uid: folder } のマッピングを返す
+   */
+  folderStatePull(
+    account: Account,
+    password: string,
+  ): Promise<{ state: Record<string, string> }> {
+    return post<{ state: Record<string, string> }>('/api/v1/folders/state', {
+      account: buildAccountPayload(account, password),
+    });
+  },
+
+  /**
    * Detect calendar events in an email
    */
   aiDetectEvent(
