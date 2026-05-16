@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   View, Text, TouchableOpacity, ScrollView, StyleSheet, TextInput,
-  ActivityIndicator, Alert, Modal, Animated, Dimensions, Platform,
+  ActivityIndicator, Alert, Modal, Animated, Dimensions, Platform, Linking,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BlurView } from 'expo-blur';
@@ -74,6 +74,7 @@ export default function EmailDetailScreen() {
   const [summary, setSummary] = useState<AiSummarizeResult | null>(null);
   const [replyTone, setReplyTone] = useState<AiTone>('polite');
   const [calEvent, setCalEvent] = useState<CalendarEvent | null | undefined>(undefined);
+  const [calendarAdded, setCalendarAdded] = useState(false);
 
   const sheetAnim = useRef(new Animated.Value(0)).current;
   const scrollY = useRef(new Animated.Value(0)).current;
@@ -207,6 +208,54 @@ export default function EmailDetailScreen() {
     } finally {
       setAiLoading(false);
     }
+  };
+
+  // Google Calendar URL を開く（Mac アプリと同仕様）
+  const openGoogleCalendar = (event: CalendarEvent) => {
+    const toGoogleDate = (iso: string) =>
+      iso.replace(/[-:]/g, '').replace(/\.\d{3}/, '').slice(0, 15) + 'Z';
+    const params = new URLSearchParams({
+      action: 'TEMPLATE',
+      text: event.title,
+      dates: `${toGoogleDate(event.startDate)}/${toGoogleDate(event.endDate)}`,
+      details: event.description ?? '',
+      ...(event.location ? { location: event.location } : {}),
+    });
+    Linking.openURL(`https://calendar.google.com/calendar/render?${params.toString()}`);
+    setCalendarAdded(true);
+  };
+
+  // ツールバー用: AI 返信（トーン選択シートを直接開く）
+  const handleAiReplyButton = () => {
+    if (!openAiKey) {
+      Alert.alert(
+        'AIキー未設定',
+        'AI機能を使うにはOpenAI APIキーが必要です。設定画面から登録してください。',
+        [
+          { text: 'キャンセル', style: 'cancel' },
+          { text: '設定を開く', onPress: () => router.push('/settings') },
+        ],
+      );
+      return;
+    }
+    openSheet('reply');
+  };
+
+  // ツールバー用: カレンダー検出を直接実行
+  const handleCalendarButton = () => {
+    if (!openAiKey) {
+      Alert.alert(
+        'AIキー未設定',
+        'AI機能を使うにはOpenAI APIキーが必要です。設定画面から登録してください。',
+        [
+          { text: 'キャンセル', style: 'cancel' },
+          { text: '設定を開く', onPress: () => router.push('/settings') },
+        ],
+      );
+      return;
+    }
+    setCalendarAdded(false);
+    handleDetectEvent();
   };
 
   if (loading) {
@@ -424,37 +473,29 @@ export default function EmailDetailScreen() {
       <View style={[s.toolbarWrap, { bottom: insets.bottom + 12 }]}>
         <BlurView intensity={70} tint="light" style={s.toolbarBlur}>
           <View style={s.toolbarInner}>
-            <TouchableOpacity style={s.toolbarBtn} onPress={handleDelete}>
-              <Ionicons name="archive-outline" size={22} color="#3C3C43" />
-            </TouchableOpacity>
-            <View style={s.toolbarDivider} />
+            {/* 返信 */}
             <TouchableOpacity style={s.toolbarBtn} onPress={() => router.push(`/compose?mode=reply&emailId=${email.id}`)}>
               <Ionicons name="arrow-undo-outline" size={22} color="#3C3C43" />
             </TouchableOpacity>
             <View style={s.toolbarDivider} />
-            <TouchableOpacity style={s.toolbarBtn} onPress={() => {
-              markRead(email.id, email.uid, email.folder || selectedFolder);
-              setEmail(prev => prev ? { ...prev, isRead: true } : prev);
-            }}>
-              <Ionicons name="checkmark-outline" size={24} color="#3C3C43" />
+            {/* 全員に返信 */}
+            <TouchableOpacity style={s.toolbarBtn} onPress={() => router.push(`/compose?mode=replyAll&emailId=${email.id}`)}>
+              <Ionicons name="arrow-undo" size={22} color="#3C3C43" />
             </TouchableOpacity>
             <View style={s.toolbarDivider} />
+            {/* 転送 */}
             <TouchableOpacity style={s.toolbarBtn} onPress={() => router.push(`/compose?mode=forward&emailId=${email.id}`)}>
               <Ionicons name="arrow-redo-outline" size={22} color="#3C3C43" />
             </TouchableOpacity>
             <View style={s.toolbarDivider} />
-            <TouchableOpacity style={s.toolbarBtn}>
-              <Ionicons name="time-outline" size={22} color="#3C3C43" />
+            {/* AI 返信を生成 */}
+            <TouchableOpacity style={s.toolbarBtn} onPress={handleAiReplyButton}>
+              <Ionicons name="flash" size={22} color={openAiKey ? '#007AFF' : '#C7C7CC'} />
             </TouchableOpacity>
             <View style={s.toolbarDivider} />
-            <TouchableOpacity style={s.toolbarBtn} onPress={() => {
-              Alert.alert('その他', undefined, [
-                { text: '全員に返信', onPress: () => router.push(`/compose?mode=replyAll&emailId=${email.id}`) },
-                { text: '削除', style: 'destructive', onPress: handleDelete },
-                { text: 'キャンセル', style: 'cancel' },
-              ]);
-            }}>
-              <Ionicons name="ellipsis-horizontal" size={22} color="#3C3C43" />
+            {/* カレンダー */}
+            <TouchableOpacity style={s.toolbarBtn} onPress={handleCalendarButton}>
+              <Ionicons name="calendar-outline" size={22} color={openAiKey ? '#3C3C43' : '#C7C7CC'} />
             </TouchableOpacity>
           </View>
         </BlurView>
@@ -602,28 +643,46 @@ export default function EmailDetailScreen() {
                   <Text style={s.aiLoadingText}>予定を検出中...</Text>
                 </View>
               ) : calEvent ? (
-                <ScrollView style={s.sheetScroll}>
-                  <View style={s.eventCard}>
-                    <Text style={s.eventTitle}>{calEvent.title}</Text>
-                    <View style={s.eventRow}>
-                      <Ionicons name="calendar-outline" size={16} color="#8E8E93" style={{ marginRight: 6 }} />
-                      <Text style={s.eventMeta}>
-                        {new Date(calEvent.startDate).toLocaleString('ja-JP', { month: 'long', day: 'numeric', weekday: 'short', hour: '2-digit', minute: '2-digit' })}
-                        {' 〜 '}
-                        {new Date(calEvent.endDate).toLocaleString('ja-JP', { hour: '2-digit', minute: '2-digit' })}
-                      </Text>
-                    </View>
-                    {calEvent.location ? (
+                <>
+                  <ScrollView style={s.sheetScroll}>
+                    <View style={s.eventCard}>
+                      <Text style={s.eventTitle}>{calEvent.title}</Text>
                       <View style={s.eventRow}>
-                        <Ionicons name={calEvent.isOnline ? 'videocam-outline' : 'location-outline'} size={16} color="#8E8E93" style={{ marginRight: 6 }} />
-                        <Text style={s.eventMeta}>{calEvent.location}</Text>
+                        <Ionicons name="calendar-outline" size={16} color="#8E8E93" style={{ marginRight: 6 }} />
+                        <Text style={s.eventMeta}>
+                          {new Date(calEvent.startDate).toLocaleString('ja-JP', { month: 'long', day: 'numeric', weekday: 'short', hour: '2-digit', minute: '2-digit' })}
+                          {' 〜 '}
+                          {new Date(calEvent.endDate).toLocaleString('ja-JP', { hour: '2-digit', minute: '2-digit' })}
+                        </Text>
                       </View>
-                    ) : null}
-                    {calEvent.description ? (
-                      <Text style={s.eventDesc}>{calEvent.description}</Text>
-                    ) : null}
-                  </View>
-                </ScrollView>
+                      {calEvent.location ? (
+                        <View style={s.eventRow}>
+                          <Ionicons name={calEvent.isOnline ? 'videocam-outline' : 'location-outline'} size={16} color="#8E8E93" style={{ marginRight: 6 }} />
+                          <Text style={s.eventMeta}>{calEvent.location}</Text>
+                        </View>
+                      ) : null}
+                      {calEvent.description ? (
+                        <Text style={s.eventDesc}>{calEvent.description}</Text>
+                      ) : null}
+                    </View>
+                  </ScrollView>
+                  {/* カレンダーに追加ボタン */}
+                  <TouchableOpacity
+                    style={[s.calendarAddBtn, calendarAdded && s.calendarAddBtnDone]}
+                    onPress={() => openGoogleCalendar(calEvent)}
+                    disabled={calendarAdded}
+                  >
+                    <Ionicons
+                      name={calendarAdded ? 'checkmark-circle' : 'calendar'}
+                      size={18}
+                      color="#fff"
+                      style={{ marginRight: 6 }}
+                    />
+                    <Text style={s.calendarAddText}>
+                      {calendarAdded ? 'カレンダーに追加しました' : 'Googleカレンダーに追加'}
+                    </Text>
+                  </TouchableOpacity>
+                </>
               ) : calEvent === null ? (
                 <View style={s.aiLoadingArea}>
                   <Ionicons name="calendar-outline" size={40} color="#C7C7CC" />
@@ -1140,4 +1199,13 @@ const s = StyleSheet.create({
   eventMeta: { fontSize: 14, color: '#3C3C43', flex: 1 },
   eventDesc: { fontSize: 13, color: '#8E8E93', lineHeight: 18, marginTop: 4 },
   noEventText: { fontSize: 15, color: '#8E8E93', textAlign: 'center', marginTop: 8 },
+
+  // ─── カレンダー追加ボタン ───
+  calendarAddBtn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    backgroundColor: '#34C759', borderRadius: 12,
+    paddingVertical: 13, marginTop: 12, marginHorizontal: 2,
+  },
+  calendarAddBtnDone: { backgroundColor: '#8E8E93' },
+  calendarAddText: { fontSize: 15, fontWeight: '600', color: '#fff' },
 });
