@@ -87,8 +87,9 @@ export const useMailStore = create<MailStore>((set, get) => ({
 
     const { folders, selectedFolder } = get();
     const SKIP = /Trash|ゴミ箱|Deleted|Spam|Junk|迷惑|Draft|下書き|Outbox|allmail|all mail|すべてのメール|重要|Important/i;
+    // バックグラウンド同期はINBOXと[Gmail]系のみ（カスタムフォルダはフラグ同期のみ）
     const targets = folders.length > 0
-      ? folders.filter(f => !SKIP.test(f.path)).map(f => f.path)
+      ? folders.filter(f => !SKIP.test(f.path) && (f.path === 'INBOX' || f.path.startsWith('[Gmail]') || f.path.startsWith('[Outlook]'))).map(f => f.path)
       : ['INBOX'];
     const ordered = ['INBOX', ...targets.filter(p => p !== 'INBOX')];
 
