@@ -1,8 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
-  ScrollView, Alert, ActivityIndicator, Platform,
-  InputAccessoryView, KeyboardAvoidingView,
+  ScrollView, Alert, ActivityIndicator, Platform, KeyboardAvoidingView,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -17,7 +16,6 @@ import type { Email } from '@/shared/types';
 type Mode = 'new' | 'reply' | 'replyAll' | 'forward';
 type Attachment = { filename: string; content: string; contentType: string; size: number };
 
-const TOOLBAR_ID = 'compose-toolbar';
 
 export default function ComposeScreen() {
   const { mode = 'new', emailId, aiBody } = useLocalSearchParams<{ mode?: Mode; emailId?: string; aiBody?: string }>();
@@ -177,23 +175,12 @@ export default function ComposeScreen() {
         <View style={{ width: 36 }} />
       </View>
 
-      {Platform.OS === 'ios' ? (
-        <>
-          <ScrollView style={{ flex: 1 }} keyboardDismissMode="interactive" keyboardShouldPersistTaps="handled">
-            {renderFields()}
-          </ScrollView>
-          <InputAccessoryView nativeID={TOOLBAR_ID}>
-            {toolbar}
-          </InputAccessoryView>
-        </>
-      ) : (
-        <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding">
-          <ScrollView style={{ flex: 1 }} keyboardShouldPersistTaps="handled">
-            {renderFields()}
-          </ScrollView>
-          {toolbar}
-        </KeyboardAvoidingView>
-      )}
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        <ScrollView style={{ flex: 1 }} keyboardDismissMode="interactive" keyboardShouldPersistTaps="handled">
+          {renderFields()}
+        </ScrollView>
+        {toolbar}
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 
@@ -213,7 +200,6 @@ export default function ComposeScreen() {
             keyboardType="email-address"
             autoCapitalize="none"
             multiline
-            inputAccessoryViewID={Platform.OS === 'ios' ? TOOLBAR_ID : undefined}
           />
           {!showCcBcc && (
             <TouchableOpacity onPress={() => setShowCcBcc(true)} style={s.ccBccBtn}>
@@ -236,7 +222,6 @@ export default function ComposeScreen() {
                 keyboardType="email-address"
                 autoCapitalize="none"
                 multiline
-                inputAccessoryViewID={Platform.OS === 'ios' ? TOOLBAR_ID : undefined}
               />
             </View>
             <View style={s.sep} />
@@ -251,7 +236,6 @@ export default function ComposeScreen() {
                 keyboardType="email-address"
                 autoCapitalize="none"
                 multiline
-                inputAccessoryViewID={Platform.OS === 'ios' ? TOOLBAR_ID : undefined}
               />
             </View>
             <View style={s.sep} />
@@ -267,7 +251,6 @@ export default function ComposeScreen() {
             onChangeText={setSubject}
             placeholder=""
             placeholderTextColor="#C7C7CC"
-            inputAccessoryViewID={Platform.OS === 'ios' ? TOOLBAR_ID : undefined}
           />
         </View>
         <View style={s.sep} />
@@ -281,7 +264,6 @@ export default function ComposeScreen() {
           placeholderTextColor="#C7C7CC"
           multiline
           textAlignVertical="top"
-          inputAccessoryViewID={Platform.OS === 'ios' ? TOOLBAR_ID : undefined}
         />
 
         {/* 添付ファイル */}
