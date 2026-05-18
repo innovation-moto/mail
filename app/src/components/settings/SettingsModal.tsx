@@ -371,10 +371,14 @@ function AiTab() {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState('');
+  const [calendarEmail, setCalendarEmail] = useState('');
+  const [calendarSaving, setCalendarSaving] = useState(false);
+  const [calendarSaved, setCalendarSaved] = useState(false);
 
   useEffect(() => {
     api.ai.getApiKey().then(setApiKey);
     api.ai.isEnabled().then(setEnabled);
+    api.settings.get().then((s) => setCalendarEmail(s.googleCalendarEmail ?? ''));
   }, []);
 
   async function handleSave() {
@@ -393,49 +397,93 @@ function AiTab() {
     }
   }
 
+  async function handleSaveCalendarEmail() {
+    setCalendarSaving(true);
+    try {
+      await api.settings.set('google_calendar_email', calendarEmail.trim());
+      setCalendarSaved(true);
+      setTimeout(() => setCalendarSaved(false), 2000);
+    } catch (err) {
+      alert((err as Error).message);
+    } finally {
+      setCalendarSaving(false);
+    }
+  }
+
   return (
-    <div className="p-6">
-      <h3 className="text-base font-semibold text-gray-900 dark:text-white mb-1">AI設定</h3>
-      <p className="text-xs text-gray-500 dark:text-gray-400 mb-4">
-        OpenAI (gpt-4o-mini) を使用します。<br />
-        APIキーは <a href="https://platform.openai.com/api-keys" className="text-blue-500 underline" target="_blank" rel="noreferrer">OpenAI Platform</a> で取得できます。新規登録で $5 の無料クレジットがあります。
-      </p>
-
-      <div className="mb-4 p-3 bg-amber-50 dark:bg-amber-900/20 rounded-lg border border-amber-200 dark:border-amber-800">
-        <p className="text-xs text-amber-700 dark:text-amber-300">
-          ⚠️ AI機能を有効にすると、メール本文がOpenAI APIに送信されます。プライバシーポリシーをご確認ください。
+    <div className="p-6 space-y-6">
+      <div>
+        <h3 className="text-base font-semibold text-gray-900 dark:text-white mb-1">AI設定</h3>
+        <p className="text-xs text-gray-500 dark:text-gray-400 mb-4">
+          OpenAI (gpt-4o-mini) を使用します。<br />
+          APIキーは <a href="https://platform.openai.com/api-keys" className="text-blue-500 underline" target="_blank" rel="noreferrer">OpenAI Platform</a> で取得できます。新規登録で $5 の無料クレジットがあります。
         </p>
-      </div>
 
-      <div className="space-y-3">
-        <div>
-          <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">OpenAI APIキー</label>
-          <input
-            type="password"
-            value={apiKey}
-            onChange={(e) => setApiKey(e.target.value)}
-            placeholder="sk-..."
-            className="w-full px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/20"
-          />
+        <div className="mb-4 p-3 bg-amber-50 dark:bg-amber-900/20 rounded-lg border border-amber-200 dark:border-amber-800">
+          <p className="text-xs text-amber-700 dark:text-amber-300">
+            ⚠️ AI機能を有効にすると、メール本文がOpenAI APIに送信されます。プライバシーポリシーをご確認ください。
+          </p>
         </div>
 
-        {error && <p className="text-xs text-red-500">{error}</p>}
-
-        <button
-          onClick={handleSave}
-          disabled={saving}
-          className="flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm"
-        >
-          {saving ? <Loader2 size={14} className="animate-spin" /> : saved ? <CheckCircle size={14} /> : null}
-          {saved ? '保存済み' : 'APIキーを保存'}
-        </button>
-
-        {enabled && (
-          <div className="flex items-center gap-2 p-3 bg-green-50 dark:bg-green-900/20 rounded-lg">
-            <CheckCircle size={14} className="text-green-500" />
-            <span className="text-xs text-green-700 dark:text-green-300">AI機能が有効です</span>
+        <div className="space-y-3">
+          <div>
+            <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">OpenAI APIキー</label>
+            <input
+              type="password"
+              value={apiKey}
+              onChange={(e) => setApiKey(e.target.value)}
+              placeholder="sk-..."
+              className="w-full px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/20"
+            />
           </div>
-        )}
+
+          {error && <p className="text-xs text-red-500">{error}</p>}
+
+          <button
+            onClick={handleSave}
+            disabled={saving}
+            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm"
+          >
+            {saving ? <Loader2 size={14} className="animate-spin" /> : saved ? <CheckCircle size={14} /> : null}
+            {saved ? '保存済み' : 'APIキーを保存'}
+          </button>
+
+          {enabled && (
+            <div className="flex items-center gap-2 p-3 bg-green-50 dark:bg-green-900/20 rounded-lg">
+              <CheckCircle size={14} className="text-green-500" />
+              <span className="text-xs text-green-700 dark:text-green-300">AI機能が有効です</span>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Googleカレンダーアカウント設定 */}
+      <div className="border-t border-gray-200 dark:border-gray-700 pt-5">
+        <h4 className="text-sm font-semibold text-gray-900 dark:text-white mb-1">Googleカレンダー</h4>
+        <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">
+          カレンダー追加ボタンで開くGoogleアカウントを指定します。<br />
+          複数アカウントでログイン中の場合、ここで使いたいアカウントのメールアドレスを設定してください。
+        </p>
+        <div className="space-y-3">
+          <div>
+            <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Googleアカウントのメールアドレス</label>
+            <input
+              type="email"
+              value={calendarEmail}
+              onChange={(e) => setCalendarEmail(e.target.value)}
+              placeholder="you@gmail.com"
+              className="w-full px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/20"
+            />
+          </div>
+          <button
+            onClick={handleSaveCalendarEmail}
+            disabled={calendarSaving}
+            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm"
+          >
+            {calendarSaving ? <Loader2 size={14} className="animate-spin" /> : calendarSaved ? <CheckCircle size={14} /> : null}
+            {calendarSaved ? '保存済み' : '保存'}
+          </button>
+        </div>
       </div>
     </div>
   );

@@ -1,5 +1,6 @@
 'use client';
 import { useEffect, useState } from 'react';
+import { Pencil } from 'lucide-react';
 import { useAccountStore } from '@/store/accountStore';
 import { useMailStore } from '@/store/mailStore';
 import { useUIStore } from '@/store/uiStore';
@@ -15,7 +16,7 @@ import { cn } from '@/lib/utils';
 
 export function AppShell() {
   const { accounts, loadAccounts, selectedAccountId } = useAccountStore();
-  const { loadEmails, loadFolders, syncEmails, loadUnreadCounts, setUnreadCounts } = useMailStore();
+  const { loadThreads, loadFolders, syncEmails, loadUnreadCounts, setUnreadCounts, selectedThreadId, selectedEmailId } = useMailStore();
   const { theme, modal, applyTheme, mobilePanel, mobileSidebarOpen, setMobileSidebarOpen } = useUIStore();
   const [initialized, setInitialized] = useState(false);
 
@@ -50,10 +51,9 @@ export function AppShell() {
   useEffect(() => {
     if (!selectedAccountId) return;
     loadFolders(selectedAccountId);
-    loadUnreadCounts(selectedAccountId);
-    // まずDBから即座に表示
-    loadEmails(selectedAccountId, 'INBOX').then(() => {
-      // その後バックグラウンドでIMAPと同期して最新メールを取得
+    // まずDBからスレッド一覧を即座に表示
+    loadThreads(selectedAccountId, 'INBOX').then(() => {
+      // その後バックグラウンドでIMAPと同期
       syncEmails(selectedAccountId).catch(() => {});
     });
   }, [selectedAccountId]);
@@ -67,9 +67,9 @@ export function AppShell() {
       if (accountId !== currentAccountId) return;
       console.log('[mail:synced] received, unreadCounts:', unreadCounts);
       setUnreadCounts(unreadCounts);
-      // 現在のフォルダのメール一覧も静かに更新
+      // 現在のフォルダのスレッド一覧も静かに更新（選択中スレッドはリセットしない）
       const selectedFolder = useMailStore.getState().selectedFolder;
-      loadEmails(accountId, selectedFolder).catch(() => {});
+      loadThreads(accountId, selectedFolder, true).catch(() => {});
     });
     return () => { unsubscribe?.(); };
   }, []);
@@ -82,7 +82,8 @@ export function AppShell() {
       await loadUnreadCounts(selectedAccountId);
       const counts = useMailStore.getState().folderUnreadCounts;
       console.log('[poll] folderUnreadCounts:', counts);
-      loadEmails(selectedAccountId, undefined);
+      const selectedFolder = useMailStore.getState().selectedFolder;
+      loadThreads(selectedAccountId, selectedFolder, true).catch(() => {});
     }, 30 * 1000);
     return () => clearInterval(timer);
   }, [selectedAccountId]);
@@ -138,6 +139,15 @@ export function AppShell() {
       )}>
         <MailView />
       </div>
+
+      {/* 新規メール FAB */}
+      <button
+        onClick={() => useUIStore.getState().openCompose()}
+        className={cn('fixed right-6 z-30 w-14 h-14 rounded-full bg-blue-600 hover:bg-blue-700 active:scale-95 text-white shadow-lg shadow-blue-500/30 flex items-center justify-center transition-all', (selectedThreadId || selectedEmailId) ? 'bottom-16' : 'bottom-6')}
+        title="新規メール"
+      >
+        <Pencil size={22} />
+      </button>
 
       {modal === 'compose' && <ComposeModal />}
       {modal === 'accountSetup' && <AccountSetupModal />}

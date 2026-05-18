@@ -1,91 +1,554 @@
 'use client';
 import { useState, useEffect, useRef, useCallback } from 'react';
 import {
-  Reply, Forward, Trash2, Star, StarOff, Pin, PinOff, MoreHorizontal,
-  Sparkles, ChevronDown, Paperclip, X, Copy, Check,
-  FolderInput, ShieldBan, Filter, Plus, Loader2, Download, AlertTriangle, CalendarPlus, ChevronLeft,
+  Reply, Forward, Trash2, Star, StarOff,
+  Sparkles, ChevronDown, ChevronUp, Paperclip, X, Copy, Check,
+  ShieldBan, Filter, Plus, Loader2, Download, AlertTriangle, CalendarPlus, ChevronLeft,
 } from 'lucide-react';
 import { useAccountStore } from '@/store/accountStore';
 import { useMailStore } from '@/store/mailStore';
 import { useUIStore } from '@/store/uiStore';
 import { api } from '@/lib/ipc';
 import { AiSummarizeResult, AiTone, CalendarEvent, Email, FilterCondition } from '@/types/shared';
-import { cn, formatFullDate, CATEGORY_LABELS, PRIORITY_LABELS, PRIORITY_COLORS } from '@/lib/utils';
+import { cn, formatFullDate, formatEmailDate, getInitials, getAvatarColor, CATEGORY_LABELS, PRIORITY_LABELS, PRIORITY_COLORS } from '@/lib/utils';
 
 export function MailView() {
   const { selectedAccountId } = useAccountStore();
-  const { selectedEmail, starEmail, pinEmail, deleteEmail, updateEmailLocally } = useMailStore();
+  const { selectedEmail, selectedThreadId, threadEmails, loadingThread, starEmail, deleteEmail, updateEmailLocally, clearThread } = useMailStore();
   const { openCompose, setMobilePanel } = useUIStore();
   const email = selectedEmail();
 
-  if (!email) {
+  // スレッドが選択されている場合はスレッドビュー
+  if (selectedThreadId && threadEmails.length > 0) {
     return (
-      <div className="flex-1 flex items-center justify-center bg-gray-50 dark:bg-[#0f1623] relative overflow-hidden">
-        {/* 背景グラデーション装飾 */}
-        <div className="absolute inset-0 pointer-events-none">
-          <div className="absolute top-1/4 left-1/2 -translate-x-1/2 w-96 h-96 bg-blue-500/5 dark:bg-blue-500/10 rounded-full blur-3xl" />
-          <div className="absolute bottom-1/3 left-1/3 w-64 h-64 bg-indigo-500/5 dark:bg-indigo-500/8 rounded-full blur-3xl" />
-        </div>
+      <div className="flex-1 flex flex-col h-screen overflow-hidden bg-white dark:bg-gray-900">
+        <ThreadView
+          key={selectedThreadId}
+          emails={threadEmails}
+          accountId={selectedAccountId ?? ''}
+          onBack={() => { clearThread(); setMobilePanel('list'); }}
+          starEmail={starEmail}
+          deleteEmail={deleteEmail}
+          updateEmailLocally={updateEmailLocally}
+          openCompose={openCompose}
+        />
+      </div>
+    );
+  }
 
-        <div className="relative text-center space-y-5 px-8">
-          {/* アイコン */}
-          <div className="flex items-center justify-center mx-auto w-20 h-20 rounded-2xl bg-white dark:bg-gray-800 shadow-lg dark:shadow-black/30 border border-gray-100 dark:border-gray-700">
-            <svg width="36" height="36" viewBox="0 0 24 24" fill="none" className="text-blue-500 dark:text-blue-400">
-              <rect x="2" y="4" width="20" height="16" rx="3" stroke="currentColor" strokeWidth="1.5" />
-              <path d="M2 8l10 6 10-6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-            </svg>
-          </div>
+  if (loadingThread) {
+    return (
+      <div className="flex-1 flex items-center justify-center bg-white dark:bg-gray-900">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500" />
+      </div>
+    );
+  }
 
-          <div className="space-y-1.5">
-            <p className="text-base font-semibold text-gray-700 dark:text-gray-200">メールを選択</p>
-            <p className="text-xs text-gray-400 dark:text-gray-500 leading-relaxed">
-              左のリストからメールを選ぶと<br />ここに内容が表示されます
-            </p>
-          </div>
-
-          {/* ショートカットヒント */}
-          <div className="flex items-center justify-center gap-3 pt-1">
-            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 shadow-sm">
-              <kbd className="text-[10px] font-medium text-gray-400 dark:text-gray-500">↑</kbd>
-              <kbd className="text-[10px] font-medium text-gray-400 dark:text-gray-500">↓</kbd>
-              <span className="text-[10px] text-gray-400 dark:text-gray-500">で移動</span>
-            </div>
-            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 shadow-sm">
-              <kbd className="text-[10px] font-medium text-gray-400 dark:text-gray-500">Enter</kbd>
-              <span className="text-[10px] text-gray-400 dark:text-gray-500">で開く</span>
-            </div>
-          </div>
-        </div>
+  // 検索結果から個別メールが選ばれた場合
+  if (email) {
+    return (
+      <div className="flex-1 flex flex-col h-screen overflow-hidden bg-white dark:bg-gray-900">
+        <MailViewContent
+          key={email.id}
+          email={email}
+          accountId={selectedAccountId ?? ''}
+          onStar={(starred) => starEmail(email.id, starred)}
+          onDelete={() => deleteEmail(email.id)}
+          onReply={() => openCompose({ replyTo: email })}
+          onReplyAll={() => openCompose({ replyTo: email, replyAll: true })}
+          onForward={() => openCompose({ forwardFrom: email })}
+          onUpdateAi={(patch) => updateEmailLocally(email.id, patch as Partial<Email>)}
+          onBack={() => setMobilePanel('list')}
+        />
       </div>
     );
   }
 
   return (
-    <div className="flex-1 flex flex-col h-screen overflow-hidden bg-white dark:bg-gray-900">
-      <MailViewContent
-        key={email.id}
-        email={email}
-        accountId={selectedAccountId ?? ''}
-        onStar={(starred) => starEmail(email.id, starred)}
-        onPin={(pinned) => pinEmail(email.id, pinned)}
-        onDelete={() => deleteEmail(email.id)}
-        onReply={() => openCompose({ replyTo: email })}
-        onReplyAll={() => openCompose({ replyTo: email, replyAll: true })}
-        onForward={() => openCompose({ forwardFrom: email })}
-        onUpdateAi={(patch) => updateEmailLocally(email.id, patch as Partial<Email>)}
-        onBack={() => setMobilePanel('list')}
-      />
+    <div className="flex-1 flex items-center justify-center bg-gray-50 dark:bg-[#0f1623] relative overflow-hidden">
+      <div className="absolute inset-0 pointer-events-none">
+        <div className="absolute top-1/4 left-1/2 -translate-x-1/2 w-96 h-96 bg-blue-500/5 dark:bg-blue-500/10 rounded-full blur-3xl" />
+        <div className="absolute bottom-1/3 left-1/3 w-64 h-64 bg-indigo-500/5 dark:bg-indigo-500/8 rounded-full blur-3xl" />
+      </div>
+      <div className="relative text-center space-y-5 px-8">
+        <div className="flex items-center justify-center mx-auto w-20 h-20 rounded-2xl bg-white dark:bg-gray-800 shadow-lg dark:shadow-black/30 border border-gray-100 dark:border-gray-700">
+          <svg width="36" height="36" viewBox="0 0 24 24" fill="none" className="text-blue-500 dark:text-blue-400">
+            <rect x="2" y="4" width="20" height="16" rx="3" stroke="currentColor" strokeWidth="1.5" />
+            <path d="M2 8l10 6 10-6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+          </svg>
+        </div>
+        <div className="space-y-1.5">
+          <p className="text-base font-semibold text-gray-700 dark:text-gray-200">スレッドを選択</p>
+          <p className="text-xs text-gray-400 dark:text-gray-500 leading-relaxed">
+            左のリストからスレッドを選ぶと<br />ここに内容が表示されます
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Thread View ────────────────────────────────────────────────────────────
+
+function ThreadView({
+  emails, accountId, onBack, starEmail, deleteEmail, updateEmailLocally, openCompose,
+}: {
+  emails: Email[];
+  accountId: string;
+  onBack: () => void;
+  starEmail: (id: string, starred: boolean) => Promise<void>;
+  deleteEmail: (id: string) => Promise<void>;
+  updateEmailLocally: (id: string, patch: Partial<Email>) => void;
+  openCompose: (opts?: { replyTo?: Email; replyAll?: boolean; forwardFrom?: Email }) => void;
+}) {
+  // 最新のメールを最初から展開、その他は折りたたみ
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(() => {
+    const latest = emails[emails.length - 1];
+    return new Set(latest ? [latest.id] : []);
+  });
+
+  function toggleEmail(id: string) {
+    setExpandedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  const latestEmail = emails[emails.length - 1];
+  const subject = emails[0]?.subject ?? '';
+
+  return (
+    <div className="flex flex-col h-full">
+      {/* Thread header */}
+      <div className="px-4 md:px-6 pt-3 md:pt-6 pb-4 border-b border-gray-200 dark:border-gray-700 flex-shrink-0">
+        <button
+          onClick={onBack}
+          className="md:hidden flex items-center gap-1 text-blue-500 text-sm mb-3 -ml-1"
+        >
+          <ChevronLeft size={18} />
+          <span>戻る</span>
+        </button>
+        <h1 className="text-lg md:text-xl font-semibold text-gray-900 dark:text-white leading-tight">
+          {subject}
+        </h1>
+        <p className="text-xs text-gray-400 mt-1">{emails.length}件のメール</p>
+      </div>
+
+      {/* Thread emails (scrollable) */}
+      <div className="flex-1 overflow-y-auto scrollbar-thin">
+        {emails.map((email, idx) => {
+          const isExpanded = expandedIds.has(email.id);
+          const isLast = idx === emails.length - 1;
+          return (
+            <ThreadEmailItem
+              key={email.id}
+              email={email}
+              expanded={isExpanded}
+              isLast={isLast}
+              onToggle={() => toggleEmail(email.id)}
+              accountId={accountId}
+              onStar={(starred) => starEmail(email.id, starred)}
+              onDelete={() => deleteEmail(email.id)}
+              onReply={() => openCompose({ replyTo: email })}
+              onReplyAll={() => openCompose({ replyTo: email, replyAll: true })}
+              onForward={() => openCompose({ forwardFrom: email })}
+              onUpdateAi={(patch) => updateEmailLocally(email.id, patch as Partial<Email>)}
+            />
+          );
+        })}
+      </div>
+
+      {/* Reply bar - 常に下部固定 */}
+      {latestEmail && (
+        <div className="px-6 py-4 border-t border-gray-200 dark:border-gray-700 flex-shrink-0 bg-white dark:bg-gray-900">
+          <AiReplyBar
+            email={latestEmail}
+            onReply={() => openCompose({ replyTo: latestEmail })}
+            onReplyAll={() => openCompose({ replyTo: latestEmail, replyAll: true })}
+            onForward={() => openCompose({ forwardFrom: latestEmail })}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ThreadEmailItem({
+  email, expanded, isLast, onToggle, accountId, onStar, onDelete,
+  onReply, onReplyAll, onForward, onUpdateAi,
+}: {
+  email: Email;
+  expanded: boolean;
+  isLast: boolean;
+  onToggle: () => void;
+  accountId: string;
+  onStar: (starred: boolean) => void;
+  onDelete: () => void;
+  onReply: () => void;
+  onReplyAll: () => void;
+  onForward: () => void;
+  onUpdateAi: (patch: Partial<Email>) => void;
+}) {
+  const [localAttachments, setLocalAttachments] = useState(email.attachments ?? []);
+  const [fetchingAttachments, setFetchingAttachments] = useState(false);
+  const [showAddressDetail, setShowAddressDetail] = useState(false);
+  const [summarizing, setSummarizing] = useState(false);
+  const [classifying, setClassifying] = useState(false);
+  const [summaryResult, setSummaryResult] = useState<AiSummarizeResult | null>(
+    email.aiSummary ? { summary: email.aiSummary, actions: email.aiActions ?? [] } : null,
+  );
+  const [showSummary, setShowSummary] = useState(false);
+  const [detectingCalendar, setDetectingCalendar] = useState(false);
+  const [calendarEvent, setCalendarEvent] = useState<CalendarEvent | null>(null);
+  const [calendarAdded, setCalendarAdded] = useState(false);
+
+  // 展開時に添付ファイルを自動取得
+  useEffect(() => {
+    if (expanded && email.hasAttachments && localAttachments.length === 0 && !fetchingAttachments) {
+      setFetchingAttachments(true);
+      api.mail.fetchAttachments(email.id)
+        .then((updated) => {
+          if (updated?.attachments && updated.attachments.length > 0) {
+            setLocalAttachments(updated.attachments);
+          }
+        })
+        .catch(console.error)
+        .finally(() => setFetchingAttachments(false));
+    }
+  }, [expanded, email.id]);
+
+  async function handleSummarize() {
+    setSummarizing(true);
+    try {
+      const result = await api.ai.summarize(email.id);
+      setSummaryResult(result);
+      setShowSummary(true);
+      onUpdateAi({ aiSummary: result.summary, aiActions: result.actions });
+    } catch (err) {
+      alert((err as Error).message);
+    } finally {
+      setSummarizing(false);
+    }
+  }
+
+  async function handleClassify() {
+    setClassifying(true);
+    try {
+      const result = await api.ai.classify(email.id);
+      onUpdateAi({ aiCategory: result.category, aiPriority: result.priority });
+    } catch (err) {
+      alert((err as Error).message);
+    } finally {
+      setClassifying(false);
+    }
+  }
+
+  async function handleDetectCalendar() {
+    setDetectingCalendar(true);
+    setCalendarEvent(null);
+    try {
+      const event = await api.ai.detectCalendarEvent(email.id);
+      if (event) {
+        setCalendarEvent(event);
+      } else {
+        alert('このメールに予定情報が見つかりませんでした。');
+      }
+    } catch (err) {
+      alert((err as Error).message);
+    } finally {
+      setDetectingCalendar(false);
+    }
+  }
+
+  async function handleAddToCalendar() {
+    if (!calendarEvent) return;
+    try {
+      await api.ai.openCalendarEvent(calendarEvent);
+      setCalendarAdded(true);
+    } catch (err) {
+      alert((err as Error).message);
+    }
+  }
+
+  return (
+    <div className={cn('border-b border-gray-100 dark:border-gray-800', isLast && 'border-b-0')}>
+      {/* Collapsed header */}
+      {!expanded ? (
+        <button
+          onClick={onToggle}
+          className="w-full flex items-center gap-3 px-6 py-3 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors text-left"
+        >
+          <div className={cn(
+            'w-7 h-7 rounded-full flex items-center justify-center text-white text-xs font-bold flex-shrink-0',
+            getAvatarColor(email.from.address),
+          )}>
+            {getInitials(email.from.name, email.from.address)}
+          </div>
+          <div className="flex-1 min-w-0">
+            <span className={cn('text-sm', !email.isRead ? 'font-semibold text-gray-900 dark:text-white' : 'text-gray-600 dark:text-gray-400')}>
+              {email.from.name || email.from.address}
+            </span>
+            <span className="text-xs text-gray-400 ml-2 truncate">
+              {email.bodyText.replace(/\s+/g, ' ').slice(0, 80)}
+            </span>
+          </div>
+          <span className="text-xs text-gray-400 flex-shrink-0">{formatEmailDate(email.date)}</span>
+          <ChevronDown size={14} className="text-gray-400 flex-shrink-0" />
+        </button>
+      ) : (
+        /* Expanded email */
+        <div className="px-4 md:px-6">
+          {/* Expanded header */}
+          <div className="pt-4 pb-3 border-b border-gray-100 dark:border-gray-800">
+            <div className="flex items-start justify-between gap-4">
+              <div className="flex items-start gap-3 flex-1 min-w-0">
+                <div className={cn(
+                  'w-9 h-9 rounded-full flex items-center justify-center text-white text-sm font-bold flex-shrink-0',
+                  getAvatarColor(email.from.address),
+                )}>
+                  {getInitials(email.from.name, email.from.address)}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 mb-0.5">
+                    <button
+                      onClick={() => setShowAddressDetail((v) => !v)}
+                      className="flex items-center gap-1.5 group"
+                    >
+                      <span className="text-sm font-medium text-gray-900 dark:text-white group-hover:text-blue-500 dark:group-hover:text-blue-400 transition-colors">
+                        {email.from.name || email.from.address}
+                      </span>
+                      {email.from.name && (
+                        <span className="text-xs text-gray-400 group-hover:text-blue-400 transition-colors">
+                          &lt;{email.from.address}&gt;
+                        </span>
+                      )}
+                      <ChevronDown size={12} className={cn('text-gray-400 transition-transform', showAddressDetail && 'rotate-180')} />
+                    </button>
+                  </div>
+
+                  {/* アドレス詳細 */}
+                  {showAddressDetail ? (
+                    <div className="mt-1 text-xs space-y-1">
+                      <div className="flex gap-1.5">
+                        <span className="text-gray-400 flex-shrink-0 w-8">From</span>
+                        <span className="text-gray-700 dark:text-gray-300 break-all">
+                          {email.from.name
+                            ? `${email.from.name} <${email.from.address}>`
+                            : email.from.address}
+                        </span>
+                      </div>
+                      {email.to.length > 0 && (
+                        <div className="flex gap-1.5">
+                          <span className="text-gray-400 flex-shrink-0 w-8">To</span>
+                          <span className="text-gray-700 dark:text-gray-300 break-all">
+                            {email.to.map((t) => t.name ? `${t.name} <${t.address}>` : t.address).join(', ')}
+                          </span>
+                        </div>
+                      )}
+                      {email.cc && email.cc.length > 0 && (
+                        <div className="flex gap-1.5">
+                          <span className="text-gray-400 flex-shrink-0 w-8">CC</span>
+                          <span className="text-gray-700 dark:text-gray-300 break-all">
+                            {email.cc.map((t) => t.name ? `${t.name} <${t.address}>` : t.address).join(', ')}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="text-xs text-gray-400">
+                      宛先: {email.to.map((t) => t.name || t.address).join(', ')}
+                    </div>
+                  )}
+                </div>
+              </div>
+              <div className="flex items-center gap-2 flex-shrink-0">
+                <span className="text-xs text-gray-400">{formatFullDate(email.date)}</span>
+                <button
+                  onClick={onToggle}
+                  className="p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-400"
+                >
+                  <ChevronUp size={14} />
+                </button>
+              </div>
+            </div>
+
+            {/* Action bar */}
+            <div className="flex items-center gap-1 mt-3 flex-wrap">
+              <ActionButton
+                icon={email.isStarred ? <StarOff size={14} /> : <Star size={14} />}
+                label={email.isStarred ? 'スター解除' : 'スター'}
+                onClick={() => onStar(!email.isStarred)}
+              />
+              <ActionButton icon={<Trash2 size={14} />} label="削除" onClick={onDelete} variant="danger" />
+              <div className="flex-1" />
+              <button
+                onClick={handleSummarize}
+                disabled={summarizing}
+                className="flex items-center gap-1 px-2.5 py-1 text-xs rounded-lg bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 hover:bg-purple-200 dark:hover:bg-purple-900/50 disabled:opacity-50 transition-colors"
+              >
+                <Sparkles size={12} /> {summarizing ? '要約中…' : '要約'}
+              </button>
+              <button
+                onClick={handleClassify}
+                disabled={classifying}
+                className="flex items-center gap-1 px-2.5 py-1 text-xs rounded-lg bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 hover:bg-blue-200 dark:hover:bg-blue-900/50 disabled:opacity-50 transition-colors"
+              >
+                <Sparkles size={12} /> {classifying ? '分類中…' : 'AI分類'}
+              </button>
+              <button
+                onClick={handleDetectCalendar}
+                disabled={detectingCalendar}
+                className="flex items-center gap-1 px-2.5 py-1 text-xs rounded-lg bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 hover:bg-green-200 dark:hover:bg-green-900/50 disabled:opacity-50 transition-colors"
+              >
+                <CalendarPlus size={12} /> {detectingCalendar ? '検出中…' : 'カレンダー'}
+              </button>
+              <button
+                onClick={onReply}
+                className="flex items-center gap-1 px-2.5 py-1 text-xs rounded-lg border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
+              >
+                <Reply size={12} /> 返信
+              </button>
+              <button
+                onClick={onForward}
+                className="flex items-center gap-1 px-2.5 py-1 text-xs rounded-lg border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
+              >
+                <Forward size={12} /> 転送
+              </button>
+            </div>
+
+            {/* AI badges */}
+            {(email.aiCategory || email.aiPriority) && (
+              <div className="flex items-center gap-2 mt-2">
+                {email.aiCategory && (
+                  <span className="text-xs px-2 py-0.5 bg-gray-100 dark:bg-gray-800 rounded-full text-gray-600 dark:text-gray-400">
+                    {CATEGORY_LABELS[email.aiCategory] ?? email.aiCategory}
+                  </span>
+                )}
+                {email.aiPriority && (
+                  <span className={cn('text-xs px-2 py-0.5 rounded-full font-medium', {
+                    'bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400': email.aiPriority === 'high',
+                    'bg-yellow-100 dark:bg-yellow-900/30 text-yellow-600 dark:text-yellow-400': email.aiPriority === 'medium',
+                    'bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400': email.aiPriority === 'low',
+                  })}>
+                    優先度: {PRIORITY_LABELS[email.aiPriority]}
+                  </span>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Calendar Event Card */}
+          {calendarEvent && (
+            <div className="mx-0 mt-3 p-4 bg-green-50 dark:bg-green-900/20 rounded-lg border border-green-200 dark:border-green-800">
+              <div className="flex items-start justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  <CalendarPlus size={14} className="text-green-500" />
+                  <span className="text-sm font-medium text-green-700 dark:text-green-300">予定を検出しました</span>
+                </div>
+                <button onClick={() => setCalendarEvent(null)} className="text-gray-400 hover:text-gray-600">
+                  <X size={14} />
+                </button>
+              </div>
+              <div className="space-y-1.5 mb-3">
+                <div className="text-sm font-semibold text-gray-800 dark:text-gray-200">{calendarEvent.title}</div>
+                <div className="text-xs text-gray-600 dark:text-gray-400">
+                  {new Date(calendarEvent.startDate).toLocaleString('ja-JP', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'short', hour: '2-digit', minute: '2-digit' })}
+                  {' 〜 '}
+                  {new Date(calendarEvent.endDate).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })}
+                </div>
+                {calendarEvent.location && (
+                  <div className="text-xs text-gray-500 dark:text-gray-400">📍 {calendarEvent.location}</div>
+                )}
+                {calendarEvent.description && (
+                  <div className="text-xs text-gray-500 dark:text-gray-400 line-clamp-2">{calendarEvent.description}</div>
+                )}
+              </div>
+              <button
+                onClick={handleAddToCalendar}
+                disabled={calendarAdded}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg bg-green-600 hover:bg-green-700 text-white disabled:opacity-50 transition-colors"
+              >
+                {calendarAdded ? <Check size={13} /> : <CalendarPlus size={13} />}
+                {calendarAdded ? 'カレンダーに追加しました' : 'カレンダーに追加'}
+              </button>
+            </div>
+          )}
+
+          {/* AI Summary */}
+          {showSummary && summaryResult && (
+            <div className="mt-3 p-4 bg-purple-50 dark:bg-purple-900/20 rounded-lg border border-purple-200 dark:border-purple-800">
+              <div className="flex items-start justify-between mb-2">
+                <div className="flex items-center gap-2">
+                  <Sparkles size={14} className="text-purple-500" />
+                  <span className="text-sm font-medium text-purple-700 dark:text-purple-300">AI 要約</span>
+                </div>
+                <button onClick={() => setShowSummary(false)} className="text-gray-400 hover:text-gray-600">
+                  <X size={14} />
+                </button>
+              </div>
+              <p className="text-sm text-gray-700 dark:text-gray-300 mb-2">{summaryResult.summary}</p>
+              {summaryResult.actions.length > 0 && (
+                <div>
+                  <div className="text-xs font-medium text-purple-600 dark:text-purple-400 mb-1">要アクション:</div>
+                  <ul className="space-y-0.5">
+                    {summaryResult.actions.map((action, i) => (
+                      <li key={i} className="text-xs text-gray-600 dark:text-gray-400 flex items-start gap-1.5">
+                        <span className="text-purple-400 flex-shrink-0">•</span>
+                        {action}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Email body */}
+          <div className="py-4">
+            {email.bodyHtml ? (
+              <EmailHtmlView html={email.bodyHtml} />
+            ) : (
+              <pre className="text-sm text-gray-700 dark:text-gray-300 whitespace-pre-wrap font-sans leading-relaxed">
+                {email.bodyText}
+              </pre>
+            )}
+          </div>
+
+          {/* Attachments */}
+          {email.hasAttachments && (
+            <div className="pb-4 border-t border-gray-100 dark:border-gray-800 pt-3">
+              <div className="flex items-center gap-1.5 mb-2 text-xs font-medium text-gray-500 dark:text-gray-400">
+                <Paperclip size={12} />
+                添付ファイル
+                {fetchingAttachments && <Loader2 size={11} className="animate-spin ml-1" />}
+              </div>
+              {fetchingAttachments ? (
+                <p className="text-xs text-gray-400">取得中...</p>
+              ) : localAttachments.length > 0 ? (
+                <div className="flex flex-wrap gap-2">
+                  {localAttachments.map((att) => (
+                    <AttachmentChip key={att.id} attachment={att} />
+                  ))}
+                </div>
+              ) : (
+                <p className="text-xs text-gray-400">添付ファイルを読み込めませんでした</p>
+              )}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
 
 function MailViewContent({
-  email, accountId, onStar, onPin, onDelete, onReply, onReplyAll, onForward, onUpdateAi, onBack,
+  email, accountId, onStar, onDelete, onReply, onReplyAll, onForward, onUpdateAi, onBack,
 }: {
   email: Email;
   accountId: string;
   onStar: (starred: boolean) => void;
-  onPin: (pinned: boolean) => void;
   onDelete: () => void;
   onReply: () => void;
   onReplyAll: () => void;
@@ -278,12 +741,6 @@ function MailViewContent({
             icon={email.isStarred ? <StarOff size={15} /> : <Star size={15} />}
             label={email.isStarred ? 'スター解除' : 'スター'}
             onClick={() => onStar(!email.isStarred)}
-          />
-          <ActionButton
-            icon={email.isPinned ? <PinOff size={15} /> : <Pin size={15} />}
-            label={email.isPinned ? 'ピン解除' : 'ピン留め'}
-            onClick={() => onPin(!email.isPinned)}
-            active={email.isPinned}
           />
           <ActionButton icon={<Trash2 size={15} />} label="削除" onClick={onDelete} variant="danger" />
 
@@ -530,6 +987,7 @@ function AiReplyBar({ email, onReply, onReplyAll, onForward }: {
   const [draft, setDraft] = useState('');
   const [copied, setCopied] = useState(false);
   const [expanded, setExpanded] = useState(false);
+  const draftRef = useRef<HTMLDivElement>(null);
 
   const tones: { value: AiTone; label: string }[] = [
     { value: 'polite', label: '丁寧' },
@@ -544,6 +1002,9 @@ function AiReplyBar({ email, onReply, onReplyAll, onForward }: {
       const result = await api.ai.generateReply(email.id, tone);
       setDraft(result);
       setExpanded(true);
+      setTimeout(() => {
+        draftRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }, 50);
     } catch (err) {
       alert((err as Error).message);
     } finally {
@@ -618,7 +1079,7 @@ function AiReplyBar({ email, onReply, onReplyAll, onForward }: {
 
       {/* Generated draft */}
       {draft && expanded && (
-        <div className="bg-gray-50 dark:bg-gray-800 rounded-lg p-3 border border-gray-200 dark:border-gray-700">
+        <div ref={draftRef} className="bg-gray-50 dark:bg-gray-800 rounded-lg p-3 border border-gray-200 dark:border-gray-700">
           <div className="flex items-center justify-between mb-2">
             <span className="text-xs font-medium text-gray-500 dark:text-gray-400">AI生成の下書き</span>
             <div className="flex items-center gap-1">

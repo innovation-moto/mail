@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
 import {
-  Inbox, Send, FileText, Trash2, Star, Pin, Folder, ChevronDown,
+  Inbox, Send, FileText, Trash2, Star, Folder, ChevronDown,
   Plus, Settings, RefreshCw, PanelLeftClose, PanelLeft, GripVertical, X,
 } from 'lucide-react';
 import { useAccountStore } from '@/store/accountStore';
@@ -14,7 +14,6 @@ const SPECIAL_FOLDERS = [
   { path: 'Sent',    name: '送信済み',    icon: Send,     color: 'text-green-500' },
   { path: 'Drafts',  name: '下書き',      icon: FileText, color: 'text-yellow-500' },
   { path: 'Starred', name: 'スター付き',  icon: Star,     color: 'text-orange-400' },
-  { path: 'Pinned',  name: 'ピン留め',    icon: Pin,      color: 'text-blue-400' },
   { path: 'Trash',   name: 'ゴミ箱',      icon: Trash2,   color: 'text-red-400' },
 ];
 
@@ -35,7 +34,7 @@ function saveFolderOrder(order: string[]) {
 
 export function Sidebar({ onMobileClose }: { onMobileClose?: () => void }) {
   const { accounts, selectedAccountId, selectAccount } = useAccountStore();
-  const { selectedFolder, folders, selectFolder, syncEmails, syncing, loadEmails, folderUnreadCounts, moveEmail } = useMailStore();
+  const { selectedFolder, folders, selectFolder, syncEmails, syncing, loadThreads, folderUnreadCounts, moveEmail } = useMailStore();
   const { openCompose, openSettings, sidebarCollapsed, toggleSidebar } = useUIStore();
 
   const account = accounts.find((a) => a.id === selectedAccountId);
@@ -164,7 +163,7 @@ export function Sidebar({ onMobileClose }: { onMobileClose?: () => void }) {
   async function handleFolderClick(path: string) {
     if (!selectedAccountId) return;
     selectFolder(path);
-    await loadEmails(selectedAccountId, path);
+    await loadThreads(selectedAccountId, path);
     syncEmails(selectedAccountId).catch(() => {});
     // モバイル：フォルダ選択後にドロワーを閉じる
     onMobileClose?.();
@@ -266,7 +265,7 @@ export function Sidebar({ onMobileClose }: { onMobileClose?: () => void }) {
                 </div>
                 {totalUnread > 0 && (
                   <span className="min-w-[20px] h-5 bg-blue-500 rounded-full flex items-center justify-center text-white text-xs font-bold px-1 flex-shrink-0">
-                    {totalUnread > 99 ? '99+' : totalUnread}
+                    {totalUnread > 999 ? '999+' : totalUnread}
                   </span>
                 )}
                 {accounts.length > 1 && (
@@ -310,20 +309,6 @@ export function Sidebar({ onMobileClose }: { onMobileClose?: () => void }) {
           )}
         </div>
       )}
-
-      {/* Compose button */}
-      <div className={cn('px-3 pb-3', sidebarCollapsed && 'px-2')}>
-        <button
-          onClick={() => openCompose()}
-          className={cn(
-            'flex items-center gap-2 rounded-full bg-blue-600 hover:bg-blue-700 text-white font-medium transition-colors',
-            sidebarCollapsed ? 'w-10 h-10 justify-center' : 'w-full px-4 py-2 text-sm',
-          )}
-        >
-          <Plus size={16} />
-          {!sidebarCollapsed && '新規メール'}
-        </button>
-      </div>
 
       {/* Folder list */}
       <nav className="flex-1 overflow-y-auto scrollbar-thin px-2 space-y-0.5">
@@ -436,7 +421,7 @@ function FolderItem({
       {!collapsed && <span className="truncate flex-1 text-left">{name}</span>}
       {!collapsed && !syncing && badge !== undefined && (
         <span className="ml-auto min-w-[20px] h-5 bg-blue-500 rounded-full flex items-center justify-center text-white text-xs font-bold px-1">
-          {badge > 99 ? '99+' : badge}
+          {badge > 999 ? '999+' : badge}
         </span>
       )}
       {!collapsed && syncing && (

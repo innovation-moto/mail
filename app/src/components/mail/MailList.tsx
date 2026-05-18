@@ -1,26 +1,51 @@
 'use client';
-import { useState } from 'react';
-import { Search, Sparkles, X, RefreshCw, Paperclip, ShieldBan, Trash2, CheckCheck, Pin, PinOff, Menu, PenSquare } from 'lucide-react';
+import { useState, useCallback, useRef } from 'react';
+import { Search, Sparkles, X, RefreshCw, Paperclip, ShieldBan, Trash2, CheckCheck, Menu, PenSquare, MessageSquare } from 'lucide-react';
 import { useAccountStore } from '@/store/accountStore';
 import { useMailStore } from '@/store/mailStore';
 import { useUIStore } from '@/store/uiStore';
-import { Email } from '@/types/shared';
+import { Email, ThreadSummary } from '@/types/shared';
 import { cn, formatEmailDate, truncate, getInitials, getAvatarColor, PRIORITY_COLORS } from '@/lib/utils';
 import { api } from '@/lib/ipc';
 
 export function MailList() {
   const { selectedAccountId } = useAccountStore();
   const {
-    emails, selectedEmailId, selectedFolder, loading, syncing,
-    selectEmail, markRead, markAllRead, searchResults, searchQuery, isSmartSearch,
-    smartSearchAnswer, clearSearch, search, smartSearch, syncEmails,
+    threads, selectedThreadId, selectedFolder, loading, loadingMoreThreads, hasMoreThreads, syncing,
+    selectThread, markAllRead, searchResults, searchQuery, isSmartSearch,
+    smartSearchAnswer, clearSearch, search, smartSearch, syncEmails, loadMoreThreads, loadThreads,
+    emails, selectedEmailId, selectEmail, markRead, loadingMore, hasMore, loadMoreEmails, clearThread,
+    deleteThread,
   } = useMailStore();
   const { openCompose, setMobileSidebarOpen, setMobilePanel } = useUIStore();
   const [query, setQuery] = useState('');
-  const [aiEnabled, setAiEnabled] = useState(false);
   const [searchMode, setSearchMode] = useState<'normal' | 'smart'>('normal');
 
-  const displayEmails = searchResults ?? emails;
+  // スレッド用無限スクロール
+  const threadObserverRef = useRef<IntersectionObserver | null>(null);
+  const threadBottomRef = useCallback((node: HTMLDivElement | null) => {
+    if (threadObserverRef.current) threadObserverRef.current.disconnect();
+    if (!node) return;
+    threadObserverRef.current = new IntersectionObserver((entries) => {
+      if (entries[0].isIntersecting && selectedAccountId && !loadingMoreThreads && hasMoreThreads) {
+        loadMoreThreads(selectedAccountId);
+      }
+    }, { threshold: 0.1 });
+    threadObserverRef.current.observe(node);
+  }, [selectedAccountId, loadingMoreThreads, hasMoreThreads, loadMoreThreads]);
+
+  // 検索結果（個別メール）用無限スクロール
+  const searchObserverRef = useRef<IntersectionObserver | null>(null);
+  const searchBottomRef = useCallback((node: HTMLDivElement | null) => {
+    if (searchObserverRef.current) searchObserverRef.current.disconnect();
+    if (!node) return;
+    searchObserverRef.current = new IntersectionObserver((entries) => {
+      if (entries[0].isIntersecting && selectedAccountId && !loadingMore && hasMore) {
+        loadMoreEmails(selectedAccountId);
+      }
+    }, { threshold: 0.1 });
+    searchObserverRef.current.observe(node);
+  }, [selectedAccountId, loadingMore, hasMore, loadMoreEmails]);
 
   async function handleSearch(e: React.FormEvent) {
     e.preventDefault();
@@ -33,15 +58,22 @@ export function MailList() {
   }
 
   async function handleSelectEmail(email: Email) {
+    clearThread();
     selectEmail(email.id);
-    setMobilePanel('mail'); // モバイル：メール本文パネルへ切り替え
+    setMobilePanel('mail');
     if (!email.isRead) {
       await markRead(email.id, true);
     }
   }
 
+  async function handleSelectThread(thread: ThreadSummary) {
+    if (!selectedAccountId) return;
+    setMobilePanel('mail');
+    await selectThread(selectedAccountId, thread.threadId, thread.folder);
+  }
+
   const title = searchResults !== null
-    ? `検索結果 (${displayEmails.length}件)`
+    ? `検索結果 (${(searchResults as Email[]).length}件)`
     : selectedFolder === 'INBOX' ? '受信トレイ'
     : selectedFolder === 'Sent' ? '送信済み'
     : selectedFolder === 'Drafts' ? '下書き'
@@ -55,7 +87,6 @@ export function MailList() {
       {/* Header */}
       <div className="px-3 md:px-4 pt-4 md:pt-8 pb-3 flex-shrink-0">
         <div className="flex items-center justify-between mb-3 gap-2">
-          {/* モバイル：ハンバーガーメニュー */}
           <button
             onClick={() => setMobileSidebarOpen(true)}
             className="md:hidden p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-500 flex-shrink-0"
@@ -64,7 +95,7 @@ export function MailList() {
           </button>
           <h2 className="text-lg font-semibold text-gray-900 dark:text-white flex-1 truncate">{title}</h2>
           <div className="flex items-center gap-0.5">
-            {searchResults === null && emails.some((e) => !e.isRead) && (
+            {searchResults === null && threads.some((t) => t.unreadCount > 0) && (
               <button
                 onClick={() => selectedAccountId && markAllRead(selectedAccountId, selectedFolder)}
                 className="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-400 hover:text-blue-500 dark:hover:text-blue-400 transition-colors"
@@ -81,7 +112,6 @@ export function MailList() {
             >
               <RefreshCw size={15} className={cn(syncing && 'animate-spin')} />
             </button>
-            {/* モバイル：新規作成ボタン */}
             <button
               onClick={() => openCompose()}
               className="md:hidden p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-400 hover:text-blue-500 dark:hover:text-blue-400 transition-colors"
@@ -132,28 +162,181 @@ export function MailList() {
         </div>
       )}
 
-      {/* Email list */}
+      {/* List */}
       <div className="flex-1 overflow-y-auto scrollbar-thin">
         {loading ? (
           <div className="flex items-center justify-center h-32">
             <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-500" />
           </div>
-        ) : displayEmails.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-32 text-gray-400">
-            <Search size={24} className="mb-2 opacity-50" />
-            <p className="text-sm">{searchResults !== null ? '該当なし' : 'メールなし'}</p>
-          </div>
+        ) : searchResults !== null ? (
+          /* 検索結果：個別メール表示 */
+          <>
+            {(searchResults as Email[]).length === 0 ? (
+              <div className="flex flex-col items-center justify-center h-32 text-gray-400">
+                <Search size={24} className="mb-2 opacity-50" />
+                <p className="text-sm">該当なし</p>
+              </div>
+            ) : (
+              <>
+                {(searchResults as Email[]).map((email) => (
+                  <EmailItem
+                    key={email.id}
+                    email={email}
+                    selected={selectedEmailId === email.id}
+                    onClick={() => handleSelectEmail(email)}
+                  />
+                ))}
+                <div ref={searchBottomRef} className="h-8 flex items-center justify-center">
+                  {loadingMore && <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-500" />}
+                </div>
+              </>
+            )}
+          </>
         ) : (
-          displayEmails.map((email) => (
-            <EmailItem
-              key={email.id}
-              email={email}
-              selected={selectedEmailId === email.id}
-              onClick={() => handleSelectEmail(email)}
-            />
-          ))
+          /* スレッド表示 */
+          <>
+            {threads.length === 0 ? (
+              <div className="flex flex-col items-center justify-center h-32 text-gray-400">
+                <Search size={24} className="mb-2 opacity-50" />
+                <p className="text-sm">メールなし</p>
+              </div>
+            ) : (
+              <>
+                {threads.map((thread) => (
+                  <ThreadItem
+                    key={thread.threadId}
+                    thread={thread}
+                    selected={selectedThreadId === thread.threadId}
+                    onClick={() => handleSelectThread(thread)}
+                    onDelete={() => deleteThread(thread.threadId, thread.latestEmailId)}
+                    onBlock={async () => {
+                      if (!selectedAccountId) return;
+                      if (!confirm(`${thread.latestFrom.address} をブロックしますか？`)) return;
+                      await api.blocklist.add(selectedAccountId, thread.latestFrom.address, 'address');
+                    }}
+                  />
+                ))}
+                <div ref={threadBottomRef} className="h-8 flex items-center justify-center">
+                  {loadingMoreThreads && <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-500" />}
+                </div>
+              </>
+            )}
+          </>
         )}
       </div>
+    </div>
+  );
+}
+
+function ThreadItem({
+  thread, selected, onClick, onDelete, onBlock,
+}: {
+  thread: ThreadSummary;
+  selected: boolean;
+  onClick: () => void;
+  onDelete?: () => Promise<void>;
+  onBlock?: () => Promise<void>;
+}) {
+  const isUnread = thread.unreadCount > 0;
+  const [hovered, setHovered] = useState(false);
+
+  return (
+    <div
+      className="relative"
+      draggable
+      onDragStart={(e) => {
+        e.dataTransfer.setData('application/email-id', thread.latestEmailId);
+        e.dataTransfer.effectAllowed = 'move';
+        const ghost = document.createElement('div');
+        ghost.style.cssText = 'position:fixed;top:-1000px;left:-1000px;background:#3b82f6;color:white;padding:4px 12px;border-radius:20px;font-size:12px;white-space:nowrap;max-width:200px;overflow:hidden;text-overflow:ellipsis;box-shadow:0 2px 8px rgba(0,0,0,0.2);';
+        ghost.textContent = thread.subject || thread.latestFrom.name || 'メール';
+        document.body.appendChild(ghost);
+        e.dataTransfer.setDragImage(ghost, ghost.offsetWidth / 2, 30);
+        setTimeout(() => document.body.removeChild(ghost), 100);
+      }}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+    >
+      <button
+        onClick={onClick}
+        className={cn(
+          'w-full text-left px-4 py-3 border-b border-gray-100 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors',
+          selected && 'bg-blue-50 dark:bg-blue-900/20 border-l-2 border-l-blue-500',
+          isUnread && !selected && 'bg-blue-50/50 dark:bg-gray-800/60',
+        )}
+      >
+        <div className="flex items-start gap-2.5">
+          {/* Avatar */}
+          <div className={cn(
+            'w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-bold flex-shrink-0 mt-0.5',
+            getAvatarColor(thread.latestFrom.address),
+          )}>
+            {getInitials(thread.latestFrom.name, thread.latestFrom.address)}
+          </div>
+
+          <div className="min-w-0 flex-1">
+            {/* From + date */}
+            <div className="flex items-center justify-between gap-1 mb-0.5">
+              <span className={cn('text-sm truncate', isUnread ? 'font-semibold text-gray-900 dark:text-white' : 'text-gray-700 dark:text-gray-300')}>
+                {thread.latestFrom.name || thread.latestFrom.address}
+              </span>
+              <span className="text-xs text-gray-400 flex-shrink-0">{formatEmailDate(thread.latestDate)}</span>
+            </div>
+
+            {/* Subject */}
+            <div className={cn('text-xs truncate mb-0.5', isUnread ? 'font-medium text-gray-800 dark:text-gray-200' : 'text-gray-600 dark:text-gray-400')}>
+              {thread.subject}
+            </div>
+
+            {/* Badges */}
+            <div className="flex items-center gap-1.5">
+              {thread.emailCount > 1 && (
+                <span className={cn(
+                  'flex items-center gap-0.5 text-xs px-1.5 py-0.5 rounded-full',
+                  isUnread
+                    ? 'bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 font-medium'
+                    : 'bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400',
+                )}>
+                  <MessageSquare size={10} />
+                  {thread.emailCount}
+                </span>
+              )}
+              {thread.hasAttachments && (
+                <Paperclip size={11} className="text-gray-400 flex-shrink-0" />
+              )}
+              {isUnread && (
+                <span className="w-2 h-2 rounded-full bg-blue-500 flex-shrink-0" />
+              )}
+              {thread.aiPriority === 'high' && (
+                <span className={cn('text-xs flex-shrink-0', PRIORITY_COLORS.high)}>●</span>
+              )}
+            </div>
+          </div>
+        </div>
+      </button>
+
+      {hovered && (
+        <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
+          {onDelete && (
+            <button
+              onClick={(e) => { e.stopPropagation(); onDelete(); }}
+              title="削除"
+              className="p-1.5 rounded-lg bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 text-gray-400 hover:text-red-500 hover:border-red-300 shadow-sm transition-colors"
+            >
+              <Trash2 size={13} />
+            </button>
+          )}
+          {onBlock && (
+            <button
+              onClick={(e) => { e.stopPropagation(); onBlock(); }}
+              title="このアドレスをブロック"
+              className="p-1.5 rounded-lg bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 text-gray-400 hover:text-orange-500 hover:border-orange-300 shadow-sm transition-colors"
+            >
+              <ShieldBan size={13} />
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -166,7 +349,7 @@ function EmailItem({
   onClick: () => void;
 }) {
   const { selectedAccountId } = useAccountStore();
-  const { deleteEmail, pinEmail } = useMailStore();
+  const { deleteEmail } = useMailStore();
   const [hovered, setHovered] = useState(false);
 
   async function handleQuickDelete(e: React.MouseEvent) {
@@ -181,11 +364,6 @@ function EmailItem({
     await api.blocklist.add(selectedAccountId, email.from.address, 'address');
   }
 
-  async function handleQuickPin(e: React.MouseEvent) {
-    e.stopPropagation();
-    await pinEmail(email.id, !email.isPinned);
-  }
-
   return (
     <div
       className="relative group"
@@ -193,7 +371,6 @@ function EmailItem({
       onDragStart={(e) => {
         e.dataTransfer.setData('application/email-id', email.id);
         e.dataTransfer.effectAllowed = 'move';
-        // ドラッグ画像をコンパクトなラベルにしてカーソル上部に表示
         const ghost = document.createElement('div');
         ghost.style.cssText = 'position:fixed;top:-1000px;left:-1000px;background:#3b82f6;color:white;padding:4px 12px;border-radius:20px;font-size:12px;white-space:nowrap;max-width:200px;overflow:hidden;text-overflow:ellipsis;box-shadow:0 2px 8px rgba(0,0,0,0.2);';
         ghost.textContent = email.subject || email.from.name || 'メール';
@@ -213,7 +390,6 @@ function EmailItem({
       )}
     >
       <div className="flex items-start gap-2.5">
-        {/* Avatar */}
         <div className={cn(
           'w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-bold flex-shrink-0 mt-0.5',
           getAvatarColor(email.from.address),
@@ -222,59 +398,30 @@ function EmailItem({
         </div>
 
         <div className="min-w-0 flex-1">
-          {/* From + date */}
           <div className="flex items-center justify-between gap-1 mb-0.5">
             <span className={cn('text-sm truncate', !email.isRead ? 'font-semibold text-gray-900 dark:text-white' : 'text-gray-700 dark:text-gray-300')}>
               {email.from.name || email.from.address}
             </span>
             <span className="text-xs text-gray-400 flex-shrink-0">{formatEmailDate(email.date)}</span>
           </div>
-
-          {/* Subject */}
           <div className={cn('text-xs truncate mb-0.5', !email.isRead ? 'font-medium text-gray-800 dark:text-gray-200' : 'text-gray-600 dark:text-gray-400')}>
             {email.subject}
           </div>
-
-          {/* Preview + badges */}
           <div className="flex items-center gap-1">
             <span className="text-xs text-gray-400 truncate flex-1">
               {truncate(email.bodyText.replace(/\s+/g, ' '), 60)}
             </span>
-            {email.hasAttachments && (
-              <Paperclip size={11} className="text-gray-400 flex-shrink-0" />
-            )}
-            {!email.isRead && (
-              <span className="w-2 h-2 rounded-full bg-blue-500 flex-shrink-0" />
-            )}
-            {email.isPinned && (
-              <Pin size={11} className="text-blue-400 flex-shrink-0" />
-            )}
-            {email.isStarred && (
-              <span className="text-yellow-400 flex-shrink-0 text-xs">★</span>
-            )}
-            {email.aiPriority === 'high' && (
-              <span className={cn('text-xs flex-shrink-0', PRIORITY_COLORS.high)}>●</span>
-            )}
+            {email.hasAttachments && <Paperclip size={11} className="text-gray-400 flex-shrink-0" />}
+            {!email.isRead && <span className="w-2 h-2 rounded-full bg-blue-500 flex-shrink-0" />}
+            {email.isStarred && <span className="text-yellow-400 flex-shrink-0 text-xs">★</span>}
+            {email.aiPriority === 'high' && <span className={cn('text-xs flex-shrink-0', PRIORITY_COLORS.high)}>●</span>}
           </div>
         </div>
       </div>
     </button>
 
-    {/* クイックアクションボタン（ホバー時に表示） */}
     {hovered && (
       <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
-        <button
-          onClick={handleQuickPin}
-          title={email.isPinned ? 'ピン留めを外す' : 'ピン留め'}
-          className={cn(
-            'p-1.5 rounded-lg bg-white dark:bg-gray-800 border shadow-sm transition-colors',
-            email.isPinned
-              ? 'border-blue-300 text-blue-500 hover:text-blue-600'
-              : 'border-gray-200 dark:border-gray-600 text-gray-400 hover:text-blue-500 hover:border-blue-300',
-          )}
-        >
-          {email.isPinned ? <PinOff size={13} /> : <Pin size={13} />}
-        </button>
         <button
           onClick={handleQuickDelete}
           title="削除"

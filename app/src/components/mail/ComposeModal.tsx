@@ -1,5 +1,5 @@
 'use client';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { X, Minimize2, Maximize2, Send, Paperclip, Sparkles, ChevronDown, PenLine, ChevronRight } from 'lucide-react';
 import { useAccountStore } from '@/store/accountStore';
 import { useMailStore } from '@/store/mailStore';
@@ -13,7 +13,7 @@ export function ComposeModal() {
   const { sendEmail } = useMailStore();
   const { closeModal, composeState } = useUIStore();
 
-  const [minimized, setMinimized] = useState(false);
+  const [expanded, setExpanded] = useState(false);
   const [sending, setSending] = useState(false);
   const [fromAccountId, setFromAccountId] = useState(selectedAccountId ?? '');
   const [to, setTo] = useState('');
@@ -27,6 +27,8 @@ export function ComposeModal() {
   const [showSignatureMenu, setShowSignatureMenu] = useState(false);
   const [quotedContent, setQuotedContent] = useState<{ header: string; body: string } | null>(null);
   const [showQuoted, setShowQuoted] = useState(false);
+  const [attachments, setAttachments] = useState<Array<{ filename: string; content: string; contentType: string; size: number }>>([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const { replyTo, replyAll, forwardFrom } = composeState;
 
@@ -87,8 +89,34 @@ export function ComposeModal() {
     setShowSignatureMenu(false);
   }
 
+  async function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(e.target.files ?? []);
+    const results = await Promise.all(files.map((file) => new Promise<{ filename: string; content: string; contentType: string; size: number }>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const base64 = (reader.result as string).split(',')[1];
+        resolve({ filename: file.name, content: base64, contentType: file.type || 'application/octet-stream', size: file.size });
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    })));
+    setAttachments((prev) => [...prev, ...results]);
+    e.target.value = '';
+  }
+
+  function removeAttachment(index: number) {
+    setAttachments((prev) => prev.filter((_, i) => i !== index));
+  }
+
+  function formatSize(bytes: number): string {
+    if (bytes < 1024) return `${bytes}B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
+  }
+
   async function handleSend() {
-    if (!to.trim() || !fromAccountId) return;
+    const toAddresses = to.split(',').map((s) => s.trim()).filter(Boolean);
+    if (toAddresses.length === 0 || !fromAccountId) return;
     setSending(true);
     try {
       const quotedText = quotedContent
@@ -96,12 +124,13 @@ export function ComposeModal() {
         : '';
       const data: ComposeData = {
         accountId: fromAccountId,
-        to: to.split(',').map((s) => s.trim()).filter(Boolean),
+        to: toAddresses,
         cc: cc ? cc.split(',').map((s) => s.trim()).filter(Boolean) : [],
         bcc: bcc ? bcc.split(',').map((s) => s.trim()).filter(Boolean) : [],
         subject,
         bodyText: body + quotedText,
         replyToMessageId: replyTo?.messageId,
+        attachments: attachments.length > 0 ? attachments : undefined,
       };
       await sendEmail(data);
       closeModal();
@@ -113,18 +142,23 @@ export function ComposeModal() {
   }
 
   return (
-    <div className="fixed bottom-0 right-0 z-50 w-full md:bottom-4 md:right-4 md:w-[560px] shadow-2xl rounded-t-2xl md:rounded-xl overflow-hidden border-t md:border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
+    <div className={cn(
+      'fixed z-50 shadow-2xl overflow-hidden border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 flex flex-col',
+      expanded
+        ? 'inset-0 rounded-none'
+        : 'bottom-0 right-0 w-full md:bottom-4 md:right-4 md:w-[560px] rounded-t-2xl md:rounded-xl border-t md:border',
+    )}>
       {/* Title bar */}
-      <div className="flex items-center justify-between px-4 py-2.5 bg-gray-100 dark:bg-gray-700 cursor-move">
+      <div className="flex items-center justify-between px-4 py-2.5 bg-gray-100 dark:bg-gray-700 cursor-move flex-shrink-0">
         <span className="text-sm font-medium text-gray-700 dark:text-gray-200">
           {replyTo ? '返信' : forwardFrom ? '転送' : '新規メール'}
         </span>
         <div className="flex items-center gap-1">
           <button
-            onClick={() => setMinimized(!minimized)}
+            onClick={() => setExpanded(!expanded)}
             className="p-1 rounded hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-500"
           >
-            {minimized ? <Maximize2 size={13} /> : <Minimize2 size={13} />}
+            {expanded ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
           </button>
           <button
             onClick={closeModal}
@@ -135,7 +169,7 @@ export function ComposeModal() {
         </div>
       </div>
 
-      {!minimized && (
+      {(
         <>
           {/* Fields */}
           <div className="border-b border-gray-200 dark:border-gray-700">
@@ -209,13 +243,13 @@ export function ComposeModal() {
           </div>
 
           {/* Body */}
-          <div className="flex flex-col">
+          <div className={cn('flex flex-col', expanded && 'flex-1')}>
             <textarea
               value={body}
               onChange={(e) => setBody(e.target.value)}
               placeholder="本文を入力…"
-              rows={quotedContent ? 6 : 12}
-              className="w-full px-4 py-3 text-sm bg-transparent outline-none text-gray-700 dark:text-gray-300 placeholder:text-gray-400 resize-none"
+              rows={expanded ? undefined : (quotedContent ? 6 : 12)}
+              className={cn('w-full px-4 py-3 text-sm bg-transparent outline-none text-gray-700 dark:text-gray-300 placeholder:text-gray-400 resize-none', expanded && 'flex-1')}
             />
             {quotedContent && (
               <div className="px-4 pb-3">
@@ -239,6 +273,22 @@ export function ComposeModal() {
             )}
           </div>
 
+          {/* 添付ファイル一覧 */}
+          {attachments.length > 0 && (
+            <div className="px-4 py-2 border-t border-gray-200 dark:border-gray-700 flex flex-wrap gap-1.5">
+              {attachments.map((att, i) => (
+                <div key={i} className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-blue-50 dark:bg-blue-900/30 border border-blue-200 dark:border-blue-700 text-xs">
+                  <Paperclip size={11} className="text-blue-500 flex-shrink-0" />
+                  <span className="text-blue-700 dark:text-blue-300 max-w-32 truncate">{att.filename}</span>
+                  <span className="text-blue-400">{formatSize(att.size)}</span>
+                  <button onClick={() => removeAttachment(i)} className="text-blue-400 hover:text-blue-600 ml-0.5">
+                    <X size={11} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
           {/* Toolbar */}
           <div className="flex items-center justify-between px-4 py-2.5 border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-750">
             <button
@@ -250,7 +300,18 @@ export function ComposeModal() {
               {sending ? '送信中…' : '送信'}
             </button>
             <div className="flex items-center gap-1">
-              <button className="p-2 rounded hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-500" title="添付ファイル">
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                className="hidden"
+                onChange={handleFileSelect}
+              />
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                className="p-2 rounded hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-500"
+                title="添付ファイル"
+              >
                 <Paperclip size={15} />
               </button>
               {signatures.length > 0 && (

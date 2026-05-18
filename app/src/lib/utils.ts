@@ -27,9 +27,9 @@ export function getInitials(name: string, email: string): string {
   if (name) {
     const parts = name.trim().split(/\s+/);
     if (parts.length >= 2) return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
-    return name[0].toUpperCase();
+    if (name[0]) return name[0].toUpperCase();
   }
-  return email[0].toUpperCase();
+  return (email?.[0] ?? '?').toUpperCase();
 }
 
 export function getAvatarColor(email: string): string {

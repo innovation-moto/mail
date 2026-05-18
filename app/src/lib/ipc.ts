@@ -7,6 +7,7 @@ import type {
   Settings,
   FilterRule,
   Signature,
+  ThreadSummary,
 } from '@/types/shared';
 
 export const isElectron = typeof window !== 'undefined' && 'electronAPI' in window;
@@ -106,6 +107,15 @@ export const api = {
     downloadAttachment: (attachmentId: string) => isElectron
       ? getAPI().mail.downloadAttachment(attachmentId)
       : Promise.resolve(null),
+    fetchThreads: (accountId: string, folder: string, limit = 50, offset = 0): Promise<ThreadSummary[]> => isElectron
+      ? getAPI().mail.fetchThreads(accountId, folder, limit, offset)
+      : Promise.resolve([]),
+    fetchThreadEmails: (accountId: string, threadId: string, folder: string) => isElectron
+      ? getAPI().mail.fetchThreadEmails(accountId, threadId, folder)
+      : Promise.resolve([]),
+    getThreadUnreadCounts: (accountId: string): Promise<Record<string, number>> => isElectron
+      ? getAPI().mail.getThreadUnreadCounts(accountId)
+      : webFetch(`/api/mail/threadUnreadCounts?accountId=${accountId}`),
   },
   ai: {
     generateReply: (emailId: string, tone: AiTone) => isElectron

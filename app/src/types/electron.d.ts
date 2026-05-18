@@ -15,6 +15,7 @@ import type {
   FilterRule,
   CalendarEvent,
   Signature,
+  ThreadSummary,
 } from '@/types/shared';
 
 interface ElectronAPI {
@@ -43,6 +44,9 @@ interface ElectronAPI {
     fetchAttachments: (emailId: string) => Promise<Email | null>;
     markSpam: (emailId: string) => Promise<string>;
     downloadAttachment: (attachmentId: string) => Promise<string | null>;
+    fetchThreads: (accountId: string, folder: string, limit?: number, offset?: number) => Promise<ThreadSummary[]>;
+    fetchThreadEmails: (accountId: string, threadId: string, folder: string) => Promise<Email[]>;
+    getThreadUnreadCounts: (accountId: string) => Promise<Record<string, number>>;
   };
   ai: {
     detectCalendarEvent: (emailId: string) => Promise<CalendarEvent | null>;
