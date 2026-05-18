@@ -126,6 +126,7 @@ export async function fetchFolders(account: Account, password: string): Promise<
     try {
       const status = await client.status('INBOX', { unseen: true });
       inboxUnread = status?.unseen ?? 0;
+      console.log('[fetchFolders] IMAP STATUS INBOX unseen:', inboxUnread);
     } catch {}
     for (const f of list) {
       folders.push({

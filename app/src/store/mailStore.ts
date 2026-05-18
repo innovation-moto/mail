@@ -1,7 +1,10 @@
 'use client';
 import { create } from 'zustand';
-import { Email, Folder, ComposeData, SyncResult } from '@/types/shared';
+import { Email, Folder, ComposeData, SyncResult, ThreadSummary } from '@/types/shared';
 import { api } from '@/lib/ipc';
+
+// 削除APIが完了するまで復活させないためのセット
+const pendingDeletes = new Set<string>();
 
 interface MailState {
   emails: Email[];
@@ -9,6 +12,8 @@ interface MailState {
   selectedFolder: string;
   folders: Folder[];
   loading: boolean;
+  loadingMore: boolean;
+  hasMore: boolean;
   syncing: boolean;
   searchQuery: string;
   searchResults: Email[] | null;
@@ -20,8 +25,21 @@ interface MailState {
   loadUnreadCounts: (accountId: string) => Promise<void>;
   setUnreadCounts: (counts: Record<string, number>) => void;
 
+  // スレッド関連
+  threads: ThreadSummary[];
+  selectedThreadId: string | null;
+  threadEmails: Email[];
+  loadingThread: boolean;
+  loadingMoreThreads: boolean;
+  hasMoreThreads: boolean;
+
   loadFolders: (accountId: string) => Promise<void>;
   loadEmails: (accountId: string, folder?: string) => Promise<void>;
+  loadMoreEmails: (accountId: string) => Promise<void>;
+  loadThreads: (accountId: string, folder?: string, silent?: boolean) => Promise<void>;
+  loadMoreThreads: (accountId: string) => Promise<void>;
+  selectThread: (accountId: string, threadId: string, folder: string) => Promise<void>;
+  clearThread: () => void;
   selectEmail: (id: string | null) => void;
   selectFolder: (folder: string) => void;
   syncEmails: (accountId: string) => Promise<SyncResult>;
@@ -31,6 +49,7 @@ interface MailState {
   starEmail: (emailId: string, isStarred: boolean) => Promise<void>;
   pinEmail: (emailId: string, isPinned: boolean) => Promise<void>;
   deleteEmail: (emailId: string) => Promise<void>;
+  deleteThread: (threadId: string, latestEmailId: string) => Promise<void>;
   moveEmail: (emailId: string, folder: string) => Promise<void>;
   search: (accountId: string, query: string) => Promise<void>;
   clearSearch: () => void;
@@ -45,6 +64,8 @@ export const useMailStore = create<MailState>((set, get) => ({
   selectedFolder: 'INBOX',
   folders: [],
   loading: false,
+  loadingMore: false,
+  hasMore: true,
   syncing: false,
   searchQuery: '',
   searchResults: null,
@@ -53,16 +74,26 @@ export const useMailStore = create<MailState>((set, get) => ({
   error: null,
   inboxUnreadCount: 0,
   folderUnreadCounts: {},
+  threads: [],
+  selectedThreadId: null,
+  threadEmails: [],
+  loadingThread: false,
+  loadingMoreThreads: false,
+  hasMoreThreads: true,
 
   selectedEmail: () => {
-    const { emails, selectedEmailId, searchResults } = get();
-    const pool = searchResults ?? emails;
-    return pool.find((e) => e.id === selectedEmailId) ?? null;
+    const { emails, selectedEmailId, searchResults, threadEmails } = get();
+    if (selectedEmailId) {
+      const pool = searchResults ?? [...emails, ...threadEmails];
+      return pool.find((e) => e.id === selectedEmailId) ?? null;
+    }
+    return null;
   },
 
   updateEmailLocally: (id, patch) => {
     set((s) => ({
       emails: s.emails.map((e) => (e.id === id ? { ...e, ...patch } : e)),
+      threadEmails: s.threadEmails.map((e) => (e.id === id ? { ...e, ...patch } : e)),
       searchResults: s.searchResults
         ? s.searchResults.map((e) => (e.id === id ? { ...e, ...patch } : e))
         : null,
@@ -73,6 +104,14 @@ export const useMailStore = create<MailState>((set, get) => ({
     try {
       const folders = await api.mail.fetchFolders(accountId);
       set({ folders });
+      // INBOXのIMAPからの実際の未読数をfolderUnreadCountsに反映
+      const inbox = folders.find((f) => f.path === 'INBOX');
+      if (inbox && inbox.unreadCount > 0) {
+        set((s) => ({
+          folderUnreadCounts: { ...s.folderUnreadCounts, INBOX: inbox.unreadCount },
+          inboxUnreadCount: inbox.unreadCount,
+        }));
+      }
     } catch (err) {
       console.error('Failed to load folders:', err);
       // エラー時はフォルダ一覧を消さない（現状維持）
@@ -81,13 +120,25 @@ export const useMailStore = create<MailState>((set, get) => ({
 
   loadEmails: async (accountId, folder) => {
     const f = folder ?? get().selectedFolder;
-    set({ loading: true, error: null });
+    set({ loading: true, error: null, hasMore: true });
     try {
       const emails = await api.mail.fetchEmails(accountId, f, 50, 0);
       const unreadCount = f === 'INBOX' ? emails.filter((e: { isRead: boolean }) => !e.isRead).length : get().inboxUnreadCount;
-      set({ emails, loading: false, selectedFolder: f, inboxUnreadCount: unreadCount });
+      set({ emails, loading: false, selectedFolder: f, inboxUnreadCount: unreadCount, hasMore: emails.length === 50 });
     } catch (err) {
       set({ loading: false, error: (err as Error).message });
+    }
+  },
+
+  loadMoreEmails: async (accountId) => {
+    const { emails, selectedFolder, loadingMore, hasMore } = get();
+    if (loadingMore || !hasMore) return;
+    set({ loadingMore: true });
+    try {
+      const more = await api.mail.fetchEmails(accountId, selectedFolder, 50, emails.length);
+      set({ emails: [...emails, ...more], loadingMore: false, hasMore: more.length === 50 });
+    } catch {
+      set({ loadingMore: false });
     }
   },
 
@@ -108,22 +159,86 @@ export const useMailStore = create<MailState>((set, get) => ({
     });
   },
 
+  loadThreads: async (accountId, folder, silent = false) => {
+    const f = folder ?? get().selectedFolder;
+    if (!silent) {
+      set({ loading: true, error: null, hasMoreThreads: true, threads: [], selectedThreadId: null, threadEmails: [] });
+    }
+    try {
+      const raw = await api.mail.fetchThreads(accountId, f, 50, 0);
+      const threads = raw.filter((t) => !pendingDeletes.has(t.threadId));
+      if (silent) {
+        set({ threads, hasMoreThreads: raw.length === 50 });
+      } else {
+        set({ threads, loading: false, selectedFolder: f, hasMoreThreads: raw.length === 50 });
+        const counts = await api.mail.getUnreadCounts(accountId);
+        set({ folderUnreadCounts: counts, inboxUnreadCount: counts['INBOX'] ?? 0 });
+      }
+    } catch (err) {
+      if (!silent) set({ loading: false, error: (err as Error).message });
+    }
+  },
+
+  loadMoreThreads: async (accountId) => {
+    const { threads, selectedFolder, loadingMoreThreads, hasMoreThreads } = get();
+    if (loadingMoreThreads || !hasMoreThreads) return;
+    set({ loadingMoreThreads: true });
+    try {
+      const more = await api.mail.fetchThreads(accountId, selectedFolder, 50, threads.length);
+      set({ threads: [...threads, ...more], loadingMoreThreads: false, hasMoreThreads: more.length === 50 });
+    } catch {
+      set({ loadingMoreThreads: false });
+    }
+  },
+
+  selectThread: async (accountId, threadId, folder) => {
+    set({ selectedThreadId: threadId, loadingThread: true, selectedEmailId: null, threadEmails: [] });
+    try {
+      const emails = await api.mail.fetchThreadEmails(accountId, threadId, folder);
+      set({ threadEmails: emails, loadingThread: false });
+      // スレッド内の未読メールをまとめて既読に
+      const unread = emails.filter((e: Email) => !e.isRead);
+      if (unread.length > 0) {
+        // スレッド一覧の未読数を即時更新
+        set((s) => ({
+          threads: s.threads.map((t) =>
+            t.threadId === threadId ? { ...t, unreadCount: 0 } : t,
+          ),
+          threadEmails: s.threadEmails.map((e) => ({ ...e, isRead: true })),
+        }));
+        // IMAP/DBへの既読反映（並列）
+        await Promise.all(unread.map((e: Email) => api.mail.markRead(e.id, true).catch(() => {})));
+        // バッジ更新（メール単位）
+        api.mail.getUnreadCounts(accountId).then((counts) => {
+          set({ folderUnreadCounts: counts, inboxUnreadCount: counts['INBOX'] ?? 0 });
+        }).catch(() => {});
+      }
+    } catch {
+      set({ loadingThread: false });
+    }
+  },
+
+  clearThread: () => set({ selectedThreadId: null, threadEmails: [], selectedEmailId: null }),
+
   selectEmail: (id) => set({ selectedEmailId: id }),
 
-  selectFolder: (folder) => set({ selectedFolder: folder, selectedEmailId: null }),
+  selectFolder: (folder) => set({ selectedFolder: folder, selectedEmailId: null, selectedThreadId: null, threadEmails: [] }),
 
   syncEmails: async (accountId) => {
     set({ syncing: true });
     try {
       const result = await api.mail.sync(accountId, get().selectedFolder);
-      // スピナーを出さずサイレントにリロード
       const f = get().selectedFolder;
+      // スレッドリストをサイレントにリロード
       try {
-        const emails = await api.mail.fetchEmails(accountId, f, 50, 0);
-        set({ emails });
+        const raw = await api.mail.fetchThreads(accountId, f, 50, 0);
+        const threads = raw.filter((t) => !pendingDeletes.has(t.threadId));
+        set({ threads, hasMoreThreads: raw.length === 50 });
       } catch {}
-      // 全フォルダの未読数を更新
-      get().loadUnreadCounts(accountId).catch(() => {});
+      // 全フォルダの未読数を更新（メール単位）
+      api.mail.getUnreadCounts(accountId).then((counts) => {
+        set({ folderUnreadCounts: counts, inboxUnreadCount: counts['INBOX'] ?? 0 });
+      }).catch(() => {});
       return result;
     } finally {
       set({ syncing: false });
@@ -205,10 +320,26 @@ export const useMailStore = create<MailState>((set, get) => ({
     }
   },
 
+  deleteThread: async (threadId, latestEmailId) => {
+    pendingDeletes.add(threadId);
+    set((s) => ({
+      threads: s.threads.filter((t) => t.threadId !== threadId),
+      selectedThreadId: s.selectedThreadId === threadId ? null : s.selectedThreadId,
+    }));
+    try {
+      await api.mail.delete(latestEmailId);
+    } finally {
+      pendingDeletes.delete(threadId);
+    }
+  },
+
   moveEmail: async (emailId, folder) => {
     set((s) => ({
       emails: s.emails.filter((e) => e.id !== emailId),
+      threads: s.threads.filter((t) => t.latestEmailId !== emailId),
       selectedEmailId: s.selectedEmailId === emailId ? null : s.selectedEmailId,
+      selectedThreadId: s.threads.find((t) => t.latestEmailId === emailId)?.threadId === s.selectedThreadId
+        ? null : s.selectedThreadId,
     }));
     await api.mail.move(emailId, folder);
   },
