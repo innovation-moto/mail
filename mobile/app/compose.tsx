@@ -3,9 +3,10 @@ import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
   ScrollView, Alert, ActivityIndicator, Platform, KeyboardAvoidingView,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import { BlurView } from 'expo-blur';
 import * as DocumentPicker from 'expo-document-picker';
 import { useAccountStore } from '../store/accountStore';
 import { useMailStore } from '../store/mailStore';
@@ -139,25 +140,7 @@ export default function ComposeScreen() {
     }
   };
 
-  const toolbar = (
-    <View style={s.toolbar}>
-      <TouchableOpacity onPress={handleAttach} style={s.toolbarBtn} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-        <Ionicons name="attach" size={22} color="#007AFF" />
-      </TouchableOpacity>
-      <View style={{ flex: 1 }} />
-      <TouchableOpacity
-        onPress={handleSend}
-        disabled={sending || !to.trim()}
-        style={[s.sendIconBtn, (sending || !to.trim()) && { opacity: 0.4 }]}
-        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-      >
-        {sending
-          ? <ActivityIndicator size="small" color="#fff" />
-          : <Ionicons name="send" size={18} color="#fff" />
-        }
-      </TouchableOpacity>
-    </View>
-  );
+  const insets = useSafeAreaInsets();
 
   return (
     <SafeAreaView style={s.container} edges={['top']}>
@@ -176,10 +159,32 @@ export default function ComposeScreen() {
       </View>
 
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-        <ScrollView style={{ flex: 1 }} keyboardDismissMode="interactive" keyboardShouldPersistTaps="handled">
+        <ScrollView style={{ flex: 1 }} keyboardDismissMode="interactive" keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: 100 }}>
           {renderFields()}
         </ScrollView>
-        {toolbar}
+
+        {/* Liquid Glass 浮遊ボタン（右下） */}
+        <View style={[s.floatWrap, { bottom: insets.bottom + 12 }]} pointerEvents="box-none">
+          <BlurView intensity={60} tint="light" style={s.glassCluster}>
+            {/* 添付 */}
+            <TouchableOpacity onPress={handleAttach} style={s.glassBtn} hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}>
+              <Ionicons name="attach" size={21} color="#333" />
+            </TouchableOpacity>
+            <View style={s.glassDivider} />
+            {/* 送信 */}
+            <TouchableOpacity
+              onPress={handleSend}
+              disabled={sending || !to.trim()}
+              style={[s.glassBtn, (sending || !to.trim()) && { opacity: 0.35 }]}
+              hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+            >
+              {sending
+                ? <ActivityIndicator size="small" color="#007AFF" />
+                : <Ionicons name="arrow-up-circle" size={28} color="#007AFF" />
+              }
+            </TouchableOpacity>
+          </BlurView>
+        </View>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
@@ -312,16 +317,19 @@ const s = StyleSheet.create({
   attachItem: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: '#F2F2F7', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 7 },
   attachName: { flex: 1, fontSize: 13, color: '#000' },
   attachSize: { fontSize: 12, color: '#8E8E93' },
-  toolbar: {
+  floatWrap: {
+    position: 'absolute', right: 16,
+    alignItems: 'flex-end',
+    pointerEvents: 'box-none',
+  },
+  glassCluster: {
     flexDirection: 'row', alignItems: 'center',
-    paddingHorizontal: 16, paddingVertical: 10,
-    borderTopWidth: 0.5, borderTopColor: '#E5E5EA',
-    backgroundColor: '#F9F9F9',
+    borderRadius: 30, overflow: 'hidden',
+    borderWidth: 0.5, borderColor: 'rgba(255,255,255,0.6)',
+    // subtle shadow
+    shadowColor: '#000', shadowOpacity: 0.12, shadowRadius: 12, shadowOffset: { width: 0, height: 4 },
+    elevation: 8,
   },
-  toolbarBtn: { padding: 4 },
-  sendIconBtn: {
-    width: 34, height: 34, borderRadius: 17,
-    backgroundColor: '#007AFF',
-    alignItems: 'center', justifyContent: 'center',
-  },
+  glassBtn: { paddingHorizontal: 14, paddingVertical: 10, alignItems: 'center', justifyContent: 'center' },
+  glassDivider: { width: 0.5, height: 26, backgroundColor: 'rgba(0,0,0,0.12)' },
 });
