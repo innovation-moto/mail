@@ -166,7 +166,9 @@ export default function ComposeScreen() {
       {/* ヘッダー */}
       <View style={s.header}>
         <TouchableOpacity onPress={() => router.back()} style={s.headerClose} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-          <Ionicons name="close" size={22} color="#007AFF" />
+          <View style={s.closeCircle}>
+            <Ionicons name="close" size={16} color="#666" />
+          </View>
         </TouchableOpacity>
         <View style={s.headerCenter}>
           <Text style={s.headerTitle} numberOfLines={1}>{account?.email ?? '新規作成'}</Text>
@@ -310,6 +312,11 @@ const s = StyleSheet.create({
     borderBottomWidth: 0.5, borderBottomColor: '#E5E5EA',
   },
   headerClose: { width: 36, alignItems: 'flex-start' },
+  closeCircle: {
+    width: 30, height: 30, borderRadius: 15,
+    backgroundColor: '#E5E5EA',
+    alignItems: 'center', justifyContent: 'center',
+  },
   headerCenter: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center' },
   headerTitle: { fontSize: 15, fontWeight: '600', color: '#000' },
   row: { flexDirection: 'row', alignItems: 'flex-start', paddingHorizontal: 16, paddingVertical: 11, minHeight: 44 },
