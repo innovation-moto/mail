@@ -107,7 +107,7 @@ export const useMailStore = create<MailState>((set, get) => ({
       const folders = await api.mail.fetchFolders(accountId);
       set({ folders });
       // INBOXのIMAPからの実際の未読数を保存（loadUnreadCountsのDB値より優先）
-      const inbox = folders.find((f) => f.path === 'INBOX');
+      const inbox = folders.find((f: Folder) => f.path === 'INBOX');
       if (inbox && inbox.unreadCount > 0) {
         console.log('[loadFolders] IMAP INBOX unreadCount:', inbox.unreadCount);
         set((s) => ({
