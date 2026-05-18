@@ -1,7 +1,8 @@
 import { ImapFlow, MailboxLockObject } from 'imapflow';
 import { Account, Folder } from '../../shared/types';
 import { parseRawEmail, ParsedEmail } from './parser';
-import { upsertEmail, UpsertEmailData, getMaxUid, getEmailUidsForFolder, updateEmailFlags, saveAttachments, moveEmail, listEmails } from '../db/queries/emails';
+import { upsertEmail, UpsertEmailData, getMaxUid, getEmailUidsForFolder, getAllEmailUidsForFolder, getAllEmailUidsWithFlagsForFolder, getCustomFolderEmailUids, updateEmailFlags, saveAttachments, moveEmail, listEmails } from '../db/queries/emails';
+import { generateThreadId } from '../utils/thread';
 import { isBlocked } from '../db/queries/blocklist';
 import { applyFilters } from '../db/queries/filters';
 import { refreshMicrosoftToken, buildXOAuth2Token } from './microsoftAuth';
@@ -22,6 +23,18 @@ async function getValidAccessToken(account: Account): Promise<string> {
   return tokens.accessToken;
 }
 
+import fs from 'fs';
+import path from 'path';
+import { app } from 'electron';
+
+function imapLog(account: string, entry: any): void {
+  try {
+    const logPath = path.join(app.getPath('userData'), 'imap.log');
+    const line = `${new Date().toISOString()} [${account}] ${JSON.stringify(entry)}\n`;
+    fs.appendFileSync(logPath, line);
+  } catch {}
+}
+
 function createClient(account: Account, password: string): ImapFlow {
   const a = account as Account & { oauthAccessToken?: string };
   const auth = a.oauthAccessToken
@@ -32,11 +45,16 @@ function createClient(account: Account, password: string): ImapFlow {
     port: account.imapPort,
     secure: account.imapSecure,
     auth,
-    logger: false,
+    logger: {
+      debug: (entry: any) => imapLog(account.email, { level: 'debug', ...entry }),
+      info: (entry: any) => imapLog(account.email, { level: 'info', ...entry }),
+      warn: (entry: any) => imapLog(account.email, { level: 'warn', ...entry }),
+      error: (entry: any) => imapLog(account.email, { level: 'error', ...entry }),
+    },
     tls: { rejectUnauthorized: false },
-    connectionTimeout: 30000,
-    socketTimeout: 300000,  // 5分（多フォルダ同期中に切れないよう）
-    greetingTimeout: 15000,
+    connectionTimeout: 20000,
+    socketTimeout: 120000,
+    greetingTimeout: 10000,
     disableAutoIdle: true,
   });
 }
@@ -103,6 +121,12 @@ export async function fetchFolders(account: Account, password: string): Promise<
   const folders: Folder[] = [];
   try {
     const list = await client.list();
+    // INBOXのみSTATUSで実際の未読数を取得（他フォルダはローカルDB集計）
+    let inboxUnread = 0;
+    try {
+      const status = await client.status('INBOX', { unseen: true });
+      inboxUnread = status?.unseen ?? 0;
+    } catch {}
     for (const f of list) {
       folders.push({
         path: f.path,
@@ -110,7 +134,7 @@ export async function fetchFolders(account: Account, password: string): Promise<
         delimiter: f.delimiter ?? '/',
         flags: Array.from(f.flags ?? []),
         specialUse: f.specialUse ?? null,
-        unreadCount: 0,
+        unreadCount: f.path === 'INBOX' ? inboxUnread : 0,
       });
     }
   } finally {
@@ -196,6 +220,7 @@ export async function syncFolder(
           subject: parsed.subject, bodyText: parsed.bodyText,
           bodyHtml: parsed.bodyHtml, date: parsed.date,
           isRead: true, hasAttachments: parsed.hasAttachments,
+          threadId: generateThreadId(account.id, parsed.subject, parsed.messageId),
         });
         blocked++;
         continue;
@@ -233,6 +258,7 @@ export async function syncFolder(
         bodyHtml: parsed.bodyHtml, date: parsed.date,
         isRead, isStarred,
         hasAttachments: parsed.hasAttachments,
+        threadId: generateThreadId(account.id, parsed.subject, parsed.messageId),
       });
 
       // 添付ファイルをDBに保存
@@ -378,7 +404,7 @@ export async function syncAllFolders(
           try { parsed = await parseRawEmail(msg.source); } catch { continue; }
 
           if (isBlocked(account.id, parsed.from.address)) {
-            upsertEmail({ id: `${account.id}-${msg.uid}-${folder}`, accountId: account.id, uid: msg.uid, messageId: parsed.messageId, folder: 'Trash', from: parsed.from, to: parsed.to, cc: parsed.cc, subject: parsed.subject, bodyText: parsed.bodyText, bodyHtml: parsed.bodyHtml, date: parsed.date, isRead: true, hasAttachments: parsed.hasAttachments });
+            upsertEmail({ id: `${account.id}-${msg.uid}-${folder}`, accountId: account.id, uid: msg.uid, messageId: parsed.messageId, folder: 'Trash', from: parsed.from, to: parsed.to, cc: parsed.cc, subject: parsed.subject, bodyText: parsed.bodyText, bodyHtml: parsed.bodyHtml, date: parsed.date, isRead: true, hasAttachments: parsed.hasAttachments, threadId: generateThreadId(account.id, parsed.subject, parsed.messageId) });
             continue;
           }
 
@@ -392,7 +418,7 @@ export async function syncAllFolders(
             pendingMoves.push({ uid: msg.uid, toFolder: filterResult.folder });
           }
 
-          upsertEmail({ id: `${account.id}-${msg.uid}-${folder}`, accountId: account.id, uid: msg.uid, messageId: parsed.messageId, folder: targetFolder, from: parsed.from, to: parsed.to, cc: parsed.cc, subject: parsed.subject, bodyText: parsed.bodyText, bodyHtml: parsed.bodyHtml, date: parsed.date, isRead, isStarred, hasAttachments: parsed.hasAttachments });
+          upsertEmail({ id: `${account.id}-${msg.uid}-${folder}`, accountId: account.id, uid: msg.uid, messageId: parsed.messageId, folder: targetFolder, from: parsed.from, to: parsed.to, cc: parsed.cc, subject: parsed.subject, bodyText: parsed.bodyText, bodyHtml: parsed.bodyHtml, date: parsed.date, isRead, isStarred, hasAttachments: parsed.hasAttachments, threadId: generateThreadId(account.id, parsed.subject, parsed.messageId) });
           if (parsed.attachments.length > 0) saveAttachments(`${account.id}-${msg.uid}-${folder}`, parsed.attachments);
           added++;
         }
@@ -413,6 +439,8 @@ export async function syncAllFolders(
               console.log(`[filter] re-apply: uid=${email.uid} → ${filterResult.folder}`);
             }
           }
+
+          // NOTE: DBのカスタムフォルダUIDとINBOX UID空間の不一致により誤移動が発生するため無効化
         }
 
         // --- フェッチ完了後にIMAPサーバー移動をまとめて実行 ---
@@ -425,18 +453,66 @@ export async function syncAllFolders(
           }
         }
 
-        // --- フラグ同期 ---
-        const existing = getEmailUidsForFolder(account.id, folder, 200);
+        // --- フラグ同期（全件・上限なし）---
+        const existing = getAllEmailUidsWithFlagsForFolder(account.id, folder);
         if (existing.length > 0) {
           const uidMap = new Map(existing.map((e) => [e.uid, e]));
-          const uidRange = existing.map((e) => e.uid).join(',');
-          for await (const msg of client.fetch(uidRange, { uid: true, flags: true }, { uid: true })) {
-            const entry = uidMap.get(msg.uid);
-            if (!entry) continue;
-            const isRead = msg.flags?.has('\\Seen') ?? false;
-            const isStarred = msg.flags?.has('\\Flagged') ?? false;
-            if (isRead !== entry.isRead || isStarred !== entry.isStarred) updateEmailFlags(entry.id, isRead, isStarred);
+          const foundUids = new Set<number>();
+          // IMAPのUID範囲指定は長すぎると失敗するので100件ずつバッチ処理
+          const BATCH = 100;
+          for (let i = 0; i < existing.length; i += BATCH) {
+            const batch = existing.slice(i, i + BATCH);
+            const uidRange = batch.map((e) => e.uid).join(',');
+            for await (const msg of client.fetch(uidRange, { uid: true, flags: true }, { uid: true })) {
+              foundUids.add(msg.uid);
+              const entry = uidMap.get(msg.uid);
+              if (!entry) continue;
+              const isRead = msg.flags?.has('\\Seen') ?? false;
+              const isStarred = msg.flags?.has('\\Flagged') ?? false;
+              if (isRead !== entry.isRead || isStarred !== entry.isStarred) updateEmailFlags(entry.id, isRead, isStarred);
+            }
           }
+          // サーバー上に存在しないUID（UIDが変わった・削除済み）は既読にする
+          for (const entry of existing) {
+            if (!foundUids.has(entry.uid) && !entry.isRead) {
+              updateEmailFlags(entry.id, true, entry.isStarred);
+            }
+          }
+        }
+
+        // --- バックフィル: サーバー上にあってDBに未登録のメールを取得 ---
+        try {
+          const dbUids = getAllEmailUidsForFolder(account.id, folder);
+          // 他フォルダに振り分け済みのUID（バックフィルで上書きしない）
+          const otherFolderUids = getCustomFolderEmailUids(account.id);
+          const serverUids: number[] = [];
+          for await (const msg of client.fetch('1:*', { uid: true }, { uid: true })) {
+            serverUids.push(msg.uid);
+          }
+          const missingUids = serverUids.filter((uid) => !dbUids.has(uid) && !otherFolderUids.has(uid));
+          if (missingUids.length > 0) {
+            console.log(`[sync] ${folder}: backfill ${missingUids.length} missing emails`);
+            const BATCH = 10;
+            for (let i = 0; i < missingUids.length; i += BATCH) {
+              const batch = missingUids.slice(i, i + BATCH);
+              const range = batch.join(',');
+              for await (const msg of client.fetch(range, { uid: true, flags: true, source: true }, { uid: true })) {
+                if (!msg.source) continue;
+                let parsed: ParsedEmail;
+                try { parsed = await parseRawEmail(msg.source); } catch { continue; }
+                if (isBlocked(account.id, parsed.from.address)) continue;
+                const filterResult = applyFilters(account.id, { from: parsed.from.address, to: parsed.to.map((t) => t.address).join(' '), subject: parsed.subject, body: parsed.bodyText });
+                const targetFolder = filterResult?.folder ?? folder;
+                const isRead = filterResult?.markRead ? true : (msg.flags?.has('\\Seen') ?? false);
+                const isStarred = filterResult?.starred ?? false;
+                upsertEmail({ id: `${account.id}-${msg.uid}-${folder}`, accountId: account.id, uid: msg.uid, messageId: parsed.messageId, folder: targetFolder, from: parsed.from, to: parsed.to, cc: parsed.cc, subject: parsed.subject, bodyText: parsed.bodyText, bodyHtml: parsed.bodyHtml, date: parsed.date, isRead, isStarred, hasAttachments: parsed.hasAttachments, threadId: generateThreadId(account.id, parsed.subject, parsed.messageId) });
+                if (parsed.attachments.length > 0) saveAttachments(`${account.id}-${msg.uid}-${folder}`, parsed.attachments);
+                added++;
+              }
+            }
+          }
+        } catch (backfillErr) {
+          console.warn(`[sync] ${folder}: backfill failed (ignored):`, (backfillErr as Error).message);
         }
 
         console.log(`[sync] ${folder}: done added=${added}`);
@@ -544,12 +620,20 @@ export async function imapDeleteEmail(
 ): Promise<void> {
   const client = createClient(account, password);
   await client.connect();
-  const lock = await client.getMailboxLock(folder);
   try {
-    const trashFolder = 'Trash';
-    await client.messageMove({ uid }, trashFolder, { uid: true });
+    const list = await client.list();
+    const trashFolder =
+      list.find((f) => (f as any).specialUse === '\\Trash')?.path ||
+      list.find((f) => /^\[Gmail\]\/Trash$/i.test(f.path))?.path ||
+      list.find((f) => /^(Trash|Deleted Items|Deleted Messages|ゴミ箱)$/i.test(f.name))?.path ||
+      'Trash';
+    const lock = await client.getMailboxLock(folder);
+    try {
+      await client.messageMove({ uid }, trashFolder, { uid: true });
+    } finally {
+      lock.release();
+    }
   } finally {
-    lock.release();
     await safeLogout(client);
   }
 }

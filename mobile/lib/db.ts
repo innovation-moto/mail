@@ -1,5 +1,5 @@
 import * as SQLite from 'expo-sqlite';
-import type { Email, EmailAddress, FilterRule, FilterCondition, Signature } from '@/shared/types';
+import type { Email, EmailAddress, FilterRule, FilterCondition, Signature, ThreadSummary } from '@/shared/types';
 
 let db: SQLite.SQLiteDatabase | null = null;
 
@@ -225,6 +225,14 @@ export async function markRead(id: string, isRead: boolean): Promise<void> {
     'UPDATE emails SET is_read = ? WHERE id = ?',
     [isRead ? 1 : 0, id],
   );
+  // 同じ message_id を持つ全フォルダのコピーにも伝播（Gmailラベル対応）
+  await database.runAsync(
+    `UPDATE emails SET is_read = ?
+     WHERE message_id != '' AND message_id IS NOT NULL
+       AND message_id = (SELECT message_id FROM emails WHERE id = ?)
+       AND id != ?`,
+    [isRead ? 1 : 0, id, id],
+  );
 }
 
 export async function markStar(id: string, isStarred: boolean): Promise<void> {
@@ -260,6 +268,14 @@ export async function updateEmailFlags(id: string, isRead: boolean, isStarred: b
     'UPDATE emails SET is_read = ?, is_starred = ? WHERE id = ?',
     [isRead ? 1 : 0, isStarred ? 1 : 0, id],
   );
+  // message_id が一致する全フォルダのコピーにも is_read を伝播（Gmailラベル対応）
+  await database.runAsync(
+    `UPDATE emails SET is_read = ?
+     WHERE message_id != '' AND message_id IS NOT NULL
+       AND message_id = (SELECT message_id FROM emails WHERE id = ?)
+       AND id != ?`,
+    [isRead ? 1 : 0, id, id],
+  );
 }
 
 /** サーバーに存在しないメールをINBOXから除外（移動・削除済み） */
@@ -281,7 +297,7 @@ export async function getUnreadCountsByFolder(
 ): Promise<Record<string, number>> {
   const database = getDb();
   const rows = await database.getAllAsync<{ folder: string; cnt: number }>(
-    `SELECT folder, COUNT(*) as cnt
+    `SELECT folder, COUNT(DISTINCT COALESCE(thread_id, id)) as cnt
      FROM emails
      WHERE account_id = ? AND is_read = 0 AND is_deleted = 0
        AND folder NOT LIKE '%Trash%'
@@ -290,6 +306,9 @@ export async function getUnreadCountsByFolder(
        AND folder NOT LIKE '%迷惑%'
        AND folder NOT LIKE '%Spam%'
        AND folder NOT LIKE '%Junk%'
+       AND folder NOT LIKE '%IM-Mail-Config%'
+       AND folder NOT LIKE '%すべてのメール%'
+       AND folder NOT LIKE '%All Mail%'
        AND folder NOT LIKE '%重要%'
        AND folder NOT LIKE '%Important%'
      GROUP BY folder`,
@@ -300,6 +319,94 @@ export async function getUnreadCountsByFolder(
   return result;
 }
 
+export async function getTotalUnreadDistinct(accountId: string): Promise<number> {
+  const database = getDb();
+  const row = await database.getFirstAsync<{ cnt: number }>(
+    `SELECT COUNT(DISTINCT COALESCE(thread_id, id)) as cnt
+     FROM emails
+     WHERE account_id = ? AND is_read = 0 AND is_deleted = 0
+       AND folder NOT LIKE '%Trash%'
+       AND folder NOT LIKE '%ゴミ箱%'
+       AND folder NOT LIKE '%Deleted%'
+       AND folder NOT LIKE '%迷惑%'
+       AND folder NOT LIKE '%Spam%'
+       AND folder NOT LIKE '%Junk%'
+       AND folder NOT LIKE '%Sent%'
+       AND folder NOT LIKE '%送信%'
+       AND folder NOT LIKE '%Draft%'
+       AND folder NOT LIKE '%下書き%'
+       AND folder NOT LIKE '%IM-Mail-Config%'
+       AND folder NOT LIKE '%すべてのメール%'
+       AND folder NOT LIKE '%All Mail%'
+       AND folder NOT LIKE '%重要%'
+       AND folder NOT LIKE '%Important%'`,
+    [accountId],
+  );
+  return row?.cnt ?? 0;
+}
+
+export async function listThreads(
+  accountId: string,
+  folder: string,
+  limit = 50,
+  offset = 0,
+): Promise<ThreadSummary[]> {
+  const database = getDb();
+  const rows = await database.getAllAsync<any>(
+    `SELECT
+      COALESCE(e.thread_id, e.id) as thread_id,
+      e.subject,
+      e.from_name,
+      e.from_address,
+      MAX(e.date) as latest_date,
+      COUNT(*) as email_count,
+      SUM(CASE WHEN e.is_read = 0 THEN 1 ELSE 0 END) as unread_count,
+      MAX(e.has_attachments) as has_attachments,
+      e.ai_priority,
+      e.folder,
+      (SELECT e2.id FROM emails e2
+       WHERE COALESCE(e2.thread_id, e2.id) = COALESCE(e.thread_id, e.id)
+         AND e2.account_id = e.account_id
+         AND e2.folder = e.folder
+         AND e2.is_deleted = 0
+       ORDER BY e2.date DESC LIMIT 1) as latest_email_id
+     FROM emails e
+     WHERE e.account_id = ? AND e.folder = ? AND e.is_deleted = 0
+     GROUP BY COALESCE(e.thread_id, e.id)
+     ORDER BY MAX(e.date) DESC
+     LIMIT ? OFFSET ?`,
+    [accountId, folder, limit, offset],
+  );
+  return rows.map((r: any) => ({
+    threadId: r.thread_id,
+    subject: r.subject,
+    latestFrom: { name: r.from_name ?? '', address: r.from_address ?? '' },
+    latestDate: r.latest_date,
+    emailCount: r.email_count,
+    unreadCount: r.unread_count,
+    hasAttachments: r.has_attachments === 1,
+    latestEmailId: r.latest_email_id,
+    aiPriority: r.ai_priority,
+    folder: r.folder,
+  }));
+}
+
+export async function getThreadEmails(
+  accountId: string,
+  threadId: string,
+  folder: string,
+): Promise<Email[]> {
+  const database = getDb();
+  const rows = await database.getAllAsync<Record<string, unknown>>(
+    `SELECT * FROM emails
+     WHERE account_id = ? AND COALESCE(thread_id, id) = ? AND folder = ? AND is_deleted = 0
+     ORDER BY date ASC
+     LIMIT 200`,
+    [accountId, threadId, folder],
+  );
+  return rows.map(rowToEmail);
+}
+
 export async function getMaxUid(accountId: string, folder: string): Promise<number> {
   const database = getDb();
   const row = await database.getFirstAsync<{ max_uid: number | null }>(
@@ -307,6 +414,15 @@ export async function getMaxUid(accountId: string, folder: string): Promise<numb
     [accountId, folder],
   );
   return row?.max_uid ?? 0;
+}
+
+export async function getEmailCountForFolder(accountId: string, folder: string): Promise<number> {
+  const database = getDb();
+  const row = await database.getFirstAsync<{ cnt: number }>(
+    'SELECT COUNT(*) as cnt FROM emails WHERE account_id = ? AND folder = ? AND is_deleted = 0',
+    [accountId, folder],
+  );
+  return row?.cnt ?? 0;
 }
 
 // ─── フィルタールール ──────────────────────────────────────
@@ -517,13 +633,13 @@ export async function applyFilterRules(accountId: string): Promise<FilterMatch[]
 
       // ローカルDB更新
       if (rule.actionMarkRead && !email.is_read) {
-        await database.runAsync('UPDATE emails SET is_read = 1 WHERE id = ?', [email.id]);
+        await database.runAsync('UPDATE emails SET is_read = 1 WHERE id = ?', [email.id as string]);
       }
       if (rule.actionStarred && !email.is_starred) {
-        await database.runAsync('UPDATE emails SET is_starred = 1 WHERE id = ?', [email.id]);
+        await database.runAsync('UPDATE emails SET is_starred = 1 WHERE id = ?', [email.id as string]);
       }
       if (rule.actionFolder && rule.actionFolder !== (email.folder as string)) {
-        await database.runAsync('UPDATE emails SET folder = ? WHERE id = ?', [rule.actionFolder, email.id]);
+        await database.runAsync('UPDATE emails SET folder = ? WHERE id = ?', [rule.actionFolder, email.id as string]);
       }
 
       // IMAP移動が必要な場合はリストに追加
@@ -555,7 +671,7 @@ export async function listSignatures(accountId?: string): Promise<Signature[]> {
   );
   return rows.map(r => ({
     id: r.id as string,
-    accountId: (r.account_id as string | null) ?? undefined,
+    accountId: (r.account_id as string | null) ?? null,
     name: r.name as string,
     content: r.content as string,
     isDefault: Boolean(r.is_default),
