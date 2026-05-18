@@ -21,6 +21,7 @@ interface MailState {
   smartSearchAnswer: string;
   error: string | null;
   inboxUnreadCount: number;
+  imapInboxCount: number;
   folderUnreadCounts: Record<string, number>;
   loadUnreadCounts: (accountId: string) => Promise<void>;
   setUnreadCounts: (counts: Record<string, number>) => void;
@@ -73,6 +74,7 @@ export const useMailStore = create<MailState>((set, get) => ({
   smartSearchAnswer: '',
   error: null,
   inboxUnreadCount: 0,
+  imapInboxCount: 0,
   folderUnreadCounts: {},
   threads: [],
   selectedThreadId: null,
@@ -104,10 +106,12 @@ export const useMailStore = create<MailState>((set, get) => ({
     try {
       const folders = await api.mail.fetchFolders(accountId);
       set({ folders });
-      // INBOXのIMAPからの実際の未読数をfolderUnreadCountsに反映
+      // INBOXのIMAPからの実際の未読数を保存（loadUnreadCountsのDB値より優先）
       const inbox = folders.find((f) => f.path === 'INBOX');
       if (inbox && inbox.unreadCount > 0) {
+        console.log('[loadFolders] IMAP INBOX unreadCount:', inbox.unreadCount);
         set((s) => ({
+          imapInboxCount: inbox.unreadCount,
           folderUnreadCounts: { ...s.folderUnreadCounts, INBOX: inbox.unreadCount },
           inboxUnreadCount: inbox.unreadCount,
         }));
@@ -145,9 +149,13 @@ export const useMailStore = create<MailState>((set, get) => ({
   loadUnreadCounts: async (accountId) => {
     try {
       const counts = await api.mail.getUnreadCounts(accountId);
+      // IMAPで取得済みのINBOX未読数がある場合はそちらを優先（DBの古い値で上書きしない）
+      const { imapInboxCount } = get();
+      const inboxCount = imapInboxCount > 0 ? imapInboxCount : (counts['INBOX'] ?? 0);
+      const merged = { ...counts, INBOX: inboxCount };
       set({
-        folderUnreadCounts: counts,
-        inboxUnreadCount: counts['INBOX'] ?? 0,
+        folderUnreadCounts: merged,
+        inboxUnreadCount: inboxCount,
       });
     } catch {}
   },
