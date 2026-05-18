@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { StatusBar } from 'expo-status-bar';
 import { useAccountStore } from '../store/accountStore';
 import { initDb } from '../lib/db';
+import { syncPushRegistrations } from '../lib/pushRegistration';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -16,18 +17,32 @@ const queryClient = new QueryClient({
 });
 
 function AppInit({ children }: { children: React.ReactNode }) {
-  const init = useAccountStore((s) => s.init);
+  const { init, accounts, getPassword, savePushToken, getPushToken } = useAccountStore();
 
   useEffect(() => {
     (async () => {
       await initDb();
       await init();
-      // 通知権限を要求（失敗しても起動を止めない）
+
+      // 通知権限を要求してプッシュトークンを取得・登録
       try {
-        const { requestNotificationPermission } = await import('../lib/notifications');
-        await requestNotificationPermission();
+        const { requestNotificationPermission, getExpoPushToken } = await import('../lib/notifications');
+        const granted = await requestNotificationPermission();
+        if (!granted) return;
+
+        const token = await getExpoPushToken();
+        if (!token) return;
+
+        // トークンが変わった場合も含めて常に保存・再登録
+        const prev = await getPushToken();
+        await savePushToken(token);
+
+        // トークン更新または初回登録時に全アカウントを再登録
+        if (token !== prev || accounts.length > 0) {
+          await syncPushRegistrations(token, accounts, getPassword);
+        }
       } catch (e) {
-        console.warn('[AppInit] notification permission error (ignored):', e);
+        console.warn('[AppInit] push registration error (ignored):', e);
       }
     })();
   }, []);
@@ -44,7 +59,7 @@ export default function RootLayout() {
           <Stack screenOptions={{ headerShown: false }}>
             <Stack.Screen name="index" options={{ headerShown: false }} />
             <Stack.Screen name="email/[id]" options={{ headerShown: false, presentation: 'card' }} />
-            <Stack.Screen name="compose" options={{ headerShown: false, presentation: 'card' }} />
+            <Stack.Screen name="compose" options={{ headerShown: false, presentation: 'formSheet', gestureEnabled: true }} />
             <Stack.Screen name="settings" options={{ headerShown: false, presentation: 'card' }} />
             <Stack.Screen name="setup" options={{ headerShown: false, presentation: 'modal' }} />
           </Stack>
