@@ -280,15 +280,17 @@ export const useMailStore = create<MailStore>((set, get) => ({
       set({ folders });
       // IMAPから取得したINBOXの実際の未読数をimapInboxCountに保存（DB値より常に優先）
       const inbox = folders.find(f => f.path === 'INBOX');
+      console.log('[loadFolders] inbox.unreadCount:', inbox?.unreadCount, 'folders count:', folders.length);
       if (inbox && inbox.unreadCount > 0) {
         set(s => ({
           imapInboxCount: inbox.unreadCount,
           folderUnreadCounts: { ...s.folderUnreadCounts, INBOX: inbox.unreadCount },
         }));
+        console.log('[loadFolders] imapInboxCount set to', inbox.unreadCount);
       }
     } catch (err) {
       // フォルダ取得失敗は無視（ハードコードにフォールバック）
-      console.warn('[loadFolders]', err);
+      console.warn('[loadFolders] error:', err);
     } finally {
       set({ foldersLoading: false });
     }
