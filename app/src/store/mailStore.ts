@@ -161,9 +161,11 @@ export const useMailStore = create<MailState>((set, get) => ({
   },
 
   setUnreadCounts: (counts) => {
+    const { imapInboxCount } = get();
+    const inboxCount = imapInboxCount > 0 ? imapInboxCount : (counts['INBOX'] ?? 0);
     set({
-      folderUnreadCounts: counts,
-      inboxUnreadCount: counts['INBOX'] ?? 0,
+      folderUnreadCounts: { ...counts, INBOX: inboxCount },
+      inboxUnreadCount: inboxCount,
     });
   },
 
@@ -180,7 +182,9 @@ export const useMailStore = create<MailState>((set, get) => ({
       } else {
         set({ threads, loading: false, selectedFolder: f, hasMoreThreads: raw.length === 50 });
         const counts = await api.mail.getUnreadCounts(accountId);
-        set({ folderUnreadCounts: counts, inboxUnreadCount: counts['INBOX'] ?? 0 });
+        const imap1 = get().imapInboxCount;
+        const inbox1 = imap1 > 0 ? imap1 : (counts['INBOX'] ?? 0);
+        set({ folderUnreadCounts: { ...counts, INBOX: inbox1 }, inboxUnreadCount: inbox1 });
       }
     } catch (err) {
       if (!silent) set({ loading: false, error: (err as Error).message });
@@ -218,7 +222,9 @@ export const useMailStore = create<MailState>((set, get) => ({
         await Promise.all(unread.map((e: Email) => api.mail.markRead(e.id, true).catch(() => {})));
         // バッジ更新（メール単位）
         api.mail.getUnreadCounts(accountId).then((counts) => {
-          set({ folderUnreadCounts: counts, inboxUnreadCount: counts['INBOX'] ?? 0 });
+          const imapN = get().imapInboxCount;
+          const inboxN = imapN > 0 ? imapN : (counts['INBOX'] ?? 0);
+          set({ folderUnreadCounts: { ...counts, INBOX: inboxN }, inboxUnreadCount: inboxN });
         }).catch(() => {});
       }
     } catch {
