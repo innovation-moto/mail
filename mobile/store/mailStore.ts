@@ -25,14 +25,13 @@ import {
 import { useAccountStore } from './accountStore';
 // notifications は動的インポートで読み込む（モジュールクラッシュ対策）
 
-// INBOXはIMAPのSTATUS値を下回らないよう保護しながらcountsをマージ
+// INBOXはIMAPのSTATUS値（imapInboxCount）を下回らないよう保護しながらcountsをマージ
 function mergeUnreadCounts(
-  current: Record<string, number>,
+  imapInboxCount: number,
   next: Record<string, number>,
 ): Record<string, number> {
-  const inboxImap = current['INBOX'] ?? 0;
   const inboxLocal = next['INBOX'] ?? 0;
-  return { ...next, INBOX: Math.max(inboxImap, inboxLocal) };
+  return { ...next, INBOX: Math.max(imapInboxCount, inboxLocal) };
 }
 
 interface MailStore {
@@ -42,6 +41,7 @@ interface MailStore {
   threadEmails: Email[];
   folders: Folder[];
   folderUnreadCounts: Record<string, number>;
+  imapInboxCount: number;
   selectedEmailId: string | null;
   selectedFolder: string;
   loading: boolean;
@@ -73,6 +73,7 @@ export const useMailStore = create<MailStore>((set, get) => ({
   threadEmails: [],
   folders: [],
   folderUnreadCounts: {},
+  imapInboxCount: 0,
   selectedEmailId: null,
   selectedFolder: 'INBOX',
   loading: false,
@@ -96,7 +97,7 @@ export const useMailStore = create<MailStore>((set, get) => ({
   async refreshUnreadCounts(accountId: string) {
     try {
       const counts = await getUnreadCountsByFolder(accountId);
-      set((s) => ({ folderUnreadCounts: mergeUnreadCounts(s.folderUnreadCounts, counts) }));
+      set((s) => ({ folderUnreadCounts: mergeUnreadCounts(s.imapInboxCount, counts) }));
     } catch {}
   },
 
@@ -249,12 +250,7 @@ export const useMailStore = create<MailStore>((set, get) => ({
 
     // 全フォルダ完了後に未読数・バッジをまとめて更新
     const counts = await getUnreadCountsByFolder(accountId);
-    // INBOXはIMAPのSTATUS値（loadFoldersが設定）を下回らないよう保護
-    const currentInbox = get().folderUnreadCounts['INBOX'] ?? 0;
-    if (currentInbox > (counts['INBOX'] ?? 0)) {
-      counts['INBOX'] = currentInbox;
-    }
-    set((s) => ({ folderUnreadCounts: mergeUnreadCounts(s.folderUnreadCounts, counts) }));
+    set((s) => ({ folderUnreadCounts: mergeUnreadCounts(s.imapInboxCount, counts) }));
 
     // 新着通知・バッジ
     try {
@@ -282,10 +278,11 @@ export const useMailStore = create<MailStore>((set, get) => ({
     try {
       const folders = await mailApi.folders(account, password);
       set({ folders });
-      // IMAPから取得したINBOXの実際の未読数でバッジを上書き（ローカルDB未同期分を補完）
+      // IMAPから取得したINBOXの実際の未読数をimapInboxCountに保存（DB値より常に優先）
       const inbox = folders.find(f => f.path === 'INBOX');
       if (inbox && inbox.unreadCount > 0) {
         set(s => ({
+          imapInboxCount: inbox.unreadCount,
           folderUnreadCounts: { ...s.folderUnreadCounts, INBOX: inbox.unreadCount },
         }));
       }
@@ -343,7 +340,7 @@ export const useMailStore = create<MailStore>((set, get) => ({
 
       // 未読数・バッジを更新
       const counts = await getUnreadCountsByFolder(accountId);
-      set((s) => ({ folderUnreadCounts: mergeUnreadCounts(s.folderUnreadCounts, counts) }));
+      set((s) => ({ folderUnreadCounts: mergeUnreadCounts(s.imapInboxCount, counts) }));
       try {
         const { setBadgeCount } = await import('../lib/notifications');
         const totalUnread = await getTotalUnreadDistinct(accountId);
@@ -405,7 +402,7 @@ export const useMailStore = create<MailStore>((set, get) => ({
 
       // フォルダ別未読数を更新
       const counts = await getUnreadCountsByFolder(accountId);
-      set((s) => ({ folderUnreadCounts: mergeUnreadCounts(s.folderUnreadCounts, counts) }));
+      set((s) => ({ folderUnreadCounts: mergeUnreadCounts(s.imapInboxCount, counts) }));
 
       // 新着メール通知
       const afterInboxUnread = counts['INBOX'] ?? 0;
@@ -446,7 +443,7 @@ export const useMailStore = create<MailStore>((set, get) => ({
 
     // 未読バッジを即時更新
     const counts = await getUnreadCountsByFolder(account.id);
-    set((s) => ({ folderUnreadCounts: mergeUnreadCounts(s.folderUnreadCounts, counts) }));
+    set((s) => ({ folderUnreadCounts: mergeUnreadCounts(s.imapInboxCount, counts) }));
     try {
       const { setBadgeCount } = await import('../lib/notifications');
       const totalUnread = await getTotalUnreadDistinct(account.id);
