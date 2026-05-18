@@ -106,6 +106,7 @@ export interface ComposeData {
   bodyHtml?: string;
   replyToMessageId?: string;
   forwardFrom?: string;
+  attachments?: Array<{ filename: string; content: string; contentType: string }>;
 }
 
 export interface BlockEntry {
@@ -114,6 +115,19 @@ export interface BlockEntry {
   pattern: string;
   type: 'address' | 'domain';
   createdAt: number;
+}
+
+export interface ThreadSummary {
+  threadId: string;
+  subject: string;
+  latestFrom: { name: string; address: string };
+  latestDate: number;
+  emailCount: number;
+  unreadCount: number;
+  hasAttachments: boolean;
+  latestEmailId: string;
+  aiPriority: string | null;
+  folder: string;
 }
 
 export interface Signature {
