@@ -145,15 +145,24 @@ export const useMailStore = create<MailStore>((set, get) => ({
       try {
         const sinceUid = await getMaxUid(accountId, folder);
         const localCount = await getEmailCountForFolder(accountId, folder);
-        // ローカルが少ない（≤50件）INBOXは多めに取得してPC側に近いバッジ数にする
-        const initialLimit = (folder === 'INBOX' && localCount <= 50) ? 150 : 50;
+
+        // INBOXのローカル件数が少ない場合、全件範囲で150件を先に取得（歴史的未読を補完）
+        if (folder === 'INBOX' && localCount <= 60) {
+          try {
+            const { emails: bulk } = await mailApi.sync(account, password, folder, undefined, 150);
+            for (const email of bulk) {
+              await upsertEmail({ ...email, accountId });
+            }
+          } catch {}
+        }
+
         let syncResult: { emails: import('@/shared/types').Email[] };
         try {
-          syncResult = await mailApi.sync(account, password, folder, sinceUid || undefined, initialLimit);
+          syncResult = await mailApi.sync(account, password, folder, sinceUid || undefined);
         } catch {
           // sinceUidが実際のIMAPのUID空間と合わない場合（DBにINBOX UIDが混在など）、
           // 全件取り直しにフォールバック
-          syncResult = await mailApi.sync(account, password, folder, undefined, initialLimit);
+          syncResult = await mailApi.sync(account, password, folder, undefined);
         }
         const { emails } = syncResult;
 
