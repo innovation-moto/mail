@@ -45,13 +45,11 @@ export default async function handler(
   try {
     await client.connect();
     const list = await client.list();
-    // INBOXの実際の未読数をSEARCH UNSEENで取得
+    // INBOXの未読数をSTATUSコマンドで取得
     let inboxUnread = 0;
     try {
-      await client.mailboxOpen('INBOX', { readOnly: true });
-      const unseen = await client.search({ seen: false }, { uid: true });
-      inboxUnread = Array.isArray(unseen) ? unseen.length : 0;
-      await client.mailboxClose();
+      const status = await client.status('INBOX', { unseen: true });
+      inboxUnread = status.unseen ?? 0;
     } catch {}
     const folders: Folder[] = list.map((f) => ({
       path: f.path,
