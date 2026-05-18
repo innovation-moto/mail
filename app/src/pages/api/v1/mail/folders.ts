@@ -49,8 +49,11 @@ export default async function handler(
     let inboxUnread = 0;
     try {
       const status = await client.status('INBOX', { unseen: true });
+      console.log('[folders] STATUS result:', JSON.stringify(status));
       inboxUnread = status.unseen ?? 0;
-    } catch {}
+    } catch (statusErr) {
+      console.error('[folders] STATUS error:', statusErr);
+    }
     const folders: Folder[] = list.map((f) => ({
       path: f.path,
       name: f.name,
