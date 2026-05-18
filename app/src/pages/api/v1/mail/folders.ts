@@ -50,7 +50,7 @@ export default async function handler(
     try {
       await client.mailboxOpen('INBOX', { readOnly: true });
       const unseen = await client.search({ seen: false }, { uid: true });
-      inboxUnread = unseen.length;
+      inboxUnread = Array.isArray(unseen) ? unseen.length : 0;
       await client.mailboxClose();
     } catch {}
     const folders: Folder[] = list.map((f) => ({
