@@ -45,12 +45,13 @@ async function post<T>(
 
   while (true) {
     try {
-      const res = await fetch(`${BASE_URL}${path}`, {
+      const fetchOpts: RequestInit = {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
-        signal,
-      });
+      };
+      if (signal !== undefined) fetchOpts.signal = signal;
+      const res = await fetch(`${BASE_URL}${path}`, fetchOpts);
 
       // 429（重複リクエスト）と 5xx はリトライ対象
       if ((res.status === 429 || res.status >= 500) && attempt < maxRetries) {

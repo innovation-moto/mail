@@ -129,8 +129,9 @@ export const useMailStore = create<MailStore>((set, get) => ({
   async syncAllFolders(accountId: string) {
     if (syncingAccounts.has(accountId)) return;
     // フォアグラウンド復帰時の連続呼び出しを防ぐ（60秒以内は skip）
+    // ただしフォルダが空の場合は必ず実行（初回・フォルダ取得失敗後の回復）
     const now = Date.now();
-    if (now - lastFullSyncAt < 60_000) return;
+    if (get().folders.length > 0 && now - lastFullSyncAt < 60_000) return;
     lastFullSyncAt = now;
     fullSyncCycle++;
     syncingAccounts.add(accountId);
