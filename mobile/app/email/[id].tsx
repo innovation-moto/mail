@@ -28,7 +28,7 @@ function LinkifiedText({ text, style }: { text: string; style?: object }) {
     const raw = m[0];
     const url = raw.startsWith('http') || raw.startsWith('mailto') ? raw : `mailto:${raw}`;
     parts.push(
-      <Text key={m.index} style={{ color: '#007AFF' }} onPressIn={() => Linking.openURL(url).catch(() => {})}>
+      <Text key={m.index} style={{ color: '#007AFF' }} onPress={() => Linking.openURL(url).catch(() => {})}>
         {raw}
       </Text>
     );
@@ -543,6 +543,9 @@ export default function EmailDetailScreen() {
                           }}
                           onShouldStartLoadWithRequest={(req) => {
                             if (req.url.startsWith('about:') || req.url.startsWith('data:')) return true;
+                            if (req.url.startsWith('http://') || req.url.startsWith('https://') || req.url.startsWith('mailto:')) {
+                              Linking.openURL(req.url).catch(() => {});
+                            }
                             return false;
                           }}
                         />
