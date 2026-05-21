@@ -11,7 +11,9 @@ import { useRouter } from 'expo-router';
 import { useAccountStore } from '../store/accountStore';
 import { useMailStore } from '../store/mailStore';
 import EmailItem from '../components/EmailItem';
-import type { Email, Folder } from '@/shared/types';
+import SenderAvatar from '../components/SenderAvatar';
+import { SwipeableThreadItem } from '../components/SwipeableThreadItem';
+import type { Email, Folder, ThreadSummary } from '@/shared/types';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
 const DRAWER_WIDTH = SCREEN_WIDTH * 0.82;
@@ -57,26 +59,26 @@ const FALLBACK_FOLDERS: Array<{ path: string; label: string; icon: IconName; col
   { path: 'Spam',   label: '迷惑メール', icon: 'warning-outline',       colorKey: 'spam' },
 ];
 
-type Section = { title: string; data: Email[] };
+type Section = { title: string; data: ThreadSummary[] };
 
-function groupByDate(emails: Email[]): Section[] {
+function groupByDate(threads: ThreadSummary[]): Section[] {
   const now = new Date();
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
   const yesterday = today - 86400000;
   const weekAgo = today - 7 * 86400000;
 
-  const groups: Record<string, Email[]> = {};
-  for (const e of emails) {
+  const groups: Record<string, ThreadSummary[]> = {};
+  for (const t of threads) {
     let label: string;
-    if (e.date >= today) label = '今日';
-    else if (e.date >= yesterday) label = '昨日';
-    else if (e.date >= weekAgo) label = '今週';
+    if (t.latestDate >= today) label = '今日';
+    else if (t.latestDate >= yesterday) label = '昨日';
+    else if (t.latestDate >= weekAgo) label = '今週';
     else {
-      const d = new Date(e.date);
+      const d = new Date(t.latestDate);
       label = `${d.getFullYear()}年${d.getMonth() + 1}月`;
     }
     if (!groups[label]) groups[label] = [];
-    groups[label].push(e);
+    groups[label].push(t);
   }
 
   const order = ['今日', '昨日', '今週'];
@@ -90,6 +92,7 @@ function groupByDate(emails: Email[]): Section[] {
   return sorted.map(title => ({ title, data: groups[title] }));
 }
 
+
 export default function InboxScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -101,11 +104,13 @@ export default function InboxScreen() {
   const spinAnim = useRef(new Animated.Value(0)).current;
   const spinLoop = useRef<Animated.CompositeAnimation | null>(null);
 
+  const [moveTarget, setMoveTarget] = useState<ThreadSummary | null>(null);
+
   const { accounts, selectedAccountId, selectAccount, initialized } = useAccountStore();
   const {
-    emails, folders, folderUnreadCounts, selectedFolder, loading, syncing, error,
-    loadEmails, syncEmails, syncAllFolders, loadFolders, setFolder, refreshUnreadCounts,
-    markRead,
+    emails, threads, folders, folderUnreadCounts, selectedFolder, loading, syncing, error,
+    loadEmails, loadThreads, selectThread, syncEmails, syncAllFolders, loadFolders, setFolder, refreshUnreadCounts,
+    markRead, deleteThread, moveThread,
   } = useMailStore();
 
   // syncing中はアイコンをスピン
@@ -130,26 +135,26 @@ export default function InboxScreen() {
   const currentFolderLabel = (() => {
     const real = folders.find(f => f.path === selectedFolder);
     if (real) return folderMeta(real).label;
-    return FALLBACK_FOLDERS.find(f => f.path === selectedFolder)?.name ?? selectedFolder;
+    return FALLBACK_FOLDERS.find(f => f.path === selectedFolder)?.label ?? selectedFolder;
   })();
 
-  const displayEmails = searchQuery.trim()
-    ? emails.filter(e => {
+  const displayThreads = searchQuery.trim()
+    ? threads.filter(t => {
         const q = searchQuery.toLowerCase();
-        return e.subject.toLowerCase().includes(q) ||
-          (e.from.name || e.from.address).toLowerCase().includes(q) ||
-          e.bodyText.toLowerCase().includes(q);
+        return t.subject.toLowerCase().includes(q) ||
+          (t.latestFrom.name || t.latestFrom.address).toLowerCase().includes(q);
       })
-    : emails;
+    : threads;
 
-  const sections = groupByDate(displayEmails);
+  const sections = groupByDate(displayThreads);
 
   useEffect(() => {
     if (!initialized || !selectedAccountId) return;
+    // loadFolders がINBOXの実際の未読数（IMAP STATUS）を設定するので先に実行
     loadFolders(selectedAccountId);
     loadEmails(selectedAccountId, selectedFolder);
+    loadThreads(selectedAccountId, selectedFolder);
     syncEmails(selectedAccountId, selectedFolder);
-    refreshUnreadCounts(selectedAccountId);
   }, [initialized, selectedAccountId, selectedFolder]);
 
   // 現在のフォルダのみ同期（送信済みなど他フォルダはsyncAllFoldersに任せる）
@@ -168,10 +173,14 @@ export default function InboxScreen() {
   }, [initialized, selectedAccountId, selectedFolder, syncRelevantFolders]);
 
   // 5分ごと：全アカウントの全フォルダをバックグラウンド同期（バッジ数をMacと揃える）
+  // useRefで初回同期の二重実行（StrictMode）を防ぐ
+  const didInitialSync = useRef(false);
   useEffect(() => {
     if (!initialized || accounts.length === 0) return;
-    // 起動直後にも全アカウント実行
-    for (const acc of accounts) syncAllFolders(acc.id);
+    if (!didInitialSync.current) {
+      didInitialSync.current = true;
+      for (const acc of accounts) syncAllFolders(acc.id);
+    }
     const timer = setInterval(() => {
       for (const acc of accounts) syncAllFolders(acc.id);
     }, 5 * 60_000);
@@ -181,8 +190,12 @@ export default function InboxScreen() {
   // アプリがフォアグラウンドに戻ったとき：現在フォルダを即同期＋全アカウント同期
   useEffect(() => {
     if (!initialized || accounts.length === 0) return;
+    let lastActiveAt = 0;
     const sub = AppState.addEventListener('change', (nextState: AppStateStatus) => {
       if (nextState === 'active') {
+        const now = Date.now();
+        if (now - lastActiveAt < 60_000) return; // 60秒以内の復帰は skip
+        lastActiveAt = now;
         syncRelevantFolders(selectedFolder);
         for (const acc of accounts) syncAllFolders(acc.id);
       }
@@ -206,10 +219,11 @@ export default function InboxScreen() {
     setRefreshing(false);
   }, [selectedAccountId, selectedFolder]);
 
-  const onEmailPress = useCallback((email: Email) => {
-    if (!email.isRead) markRead(email.id, email.uid, email.folder || selectedFolder);
-    router.push(`/email/${email.id}`);
-  }, [selectedFolder]);
+  const onThreadPress = useCallback(async (thread: ThreadSummary) => {
+    if (!selectedAccountId) return;
+    await selectThread(selectedAccountId, thread.threadId, thread.folder || selectedFolder);
+    router.push(`/email/${thread.latestEmailId}`);
+  }, [selectedAccountId, selectedFolder]);
 
   const handleFolderSelect = (folderPath: string) => {
     setFolder(folderPath);
@@ -217,6 +231,7 @@ export default function InboxScreen() {
     if (selectedAccountId) {
       setTimeout(() => {
         loadEmails(selectedAccountId, folderPath);
+        loadThreads(selectedAccountId, folderPath);
         syncEmails(selectedAccountId, folderPath);
       }, 300);
     }
@@ -343,16 +358,21 @@ export default function InboxScreen() {
         )}
 
 
-        {loading && emails.length === 0 ? (
+        {loading && threads.length === 0 ? (
           <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
             <ActivityIndicator size="large" color="#007AFF" />
           </View>
         ) : (
           <SectionList
             sections={sections}
-            keyExtractor={item => item.id}
+            keyExtractor={item => item.threadId}
             renderItem={({ item }) => (
-              <EmailItem email={item} onPress={() => onEmailPress(item)} />
+              <SwipeableThreadItem
+                thread={item}
+                onPress={() => onThreadPress(item)}
+                onDelete={() => selectedAccountId && deleteThread(selectedAccountId, item.threadId, item.folder || selectedFolder)}
+                onMove={() => setMoveTarget(item)}
+              />
             )}
             renderSectionHeader={({ section }) => (
               <View style={s.sectionHeader}>
@@ -374,6 +394,55 @@ export default function InboxScreen() {
           />
         )}
       </SafeAreaView>
+
+      {/* フォルダ移動モーダル */}
+      {moveTarget && (() => {
+        // サーバーフォルダが未取得の場合はフォールバックを使用
+        const moveFolders: Array<{ path: string; label: string; icon: IconName; colorKey: keyof typeof FOLDER_COLORS }> =
+          folders.length > 0
+            ? folders
+                .filter(f => {
+                  const p = f.path.toLowerCase();
+                  const su = (f.specialUse ?? '').toLowerCase();
+                  if (p === '[gmail]') return false;
+                  if (su === '\\allmail' || p.includes('all mail') || p.includes('allmail')) return false;
+                  return true;
+                })
+                .map(f => { const m = folderMeta(f); return { path: f.path, label: m.label, icon: m.icon, colorKey: m.colorKey }; })
+            : FALLBACK_FOLDERS;
+        return (
+          <Modal transparent animationType="slide" onRequestClose={() => setMoveTarget(null)}>
+            <TouchableOpacity style={s.overlay} activeOpacity={1} onPress={() => setMoveTarget(null)}>
+              <View style={[s.moveSheet, { paddingBottom: insets.bottom + 12 }]}>
+                <View style={s.moveSheetHandle} />
+                <Text style={s.moveSheetTitle}>フォルダへ移動</Text>
+                <ScrollView bounces={false} style={{ maxHeight: 360 }}>
+                  {moveFolders.map(f => {
+                    const clr = FOLDER_COLORS[f.colorKey] ?? FOLDER_COLORS.default;
+                    return (
+                      <TouchableOpacity
+                        key={f.path}
+                        style={s.folderRow}
+                        onPress={() => {
+                          if (selectedAccountId && moveTarget) {
+                            moveThread(selectedAccountId, moveTarget.threadId, moveTarget.folder || selectedFolder, f.path);
+                          }
+                          setMoveTarget(null);
+                        }}
+                      >
+                        <View style={[s.folderIcon, { backgroundColor: clr.bg }]}>
+                          <Ionicons name={f.icon as any} size={18} color={clr.icon} />
+                        </View>
+                        <Text style={s.folderLabel}>{f.label}</Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </ScrollView>
+              </View>
+            </TouchableOpacity>
+          </Modal>
+        );
+      })()}
 
       {/* FAB */}
       <TouchableOpacity
@@ -417,6 +486,11 @@ function DrawerContent({
   const spinDeg = spinAnim.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '360deg'] });
 
   // サーバーフォルダがあればそれを使い、なければフォールバック
+  if (folders.length > 0) {
+    console.log('[drawer] folders from store:', folders.map(f => f.path).join(', '));
+  } else {
+    console.log('[drawer] folders empty, showing fallback');
+  }
   type DisplayFolder = { path: string; label: string; icon: IconName; colorKey: keyof typeof FOLDER_COLORS; unreadCount?: number };
   const displayFolders: DisplayFolder[] =
     folders.length > 0
@@ -430,6 +504,8 @@ function DrawerContent({
             if (su === '\\allmail' || p.includes('all mail') || p.includes('allmail') || p.includes('すべてのメール')) return false;
             // 重要（Important）は非表示（INBOXと内容が重複するため）
             if (su === '\\important' || p.includes('重要') || p.includes('important')) return false;
+            // 内部設定フォルダは非表示
+            if (p === 'im-mail-config') return false;
             return true;
           })
           .map(f => {
@@ -481,7 +557,7 @@ function DrawerContent({
 
         {/* フォルダ一覧（PCと同じカラーアイコン） */}
         <View style={d.folderHeader}>
-          <Text style={d.sectionLabel}>フォルダ</Text>
+          <Text style={d.sectionLabel}>フォルダ {folders.length > 0 ? `(${folders.length})` : '(未取得)'}</Text>
           <TouchableOpacity style={d.syncBtn} onPress={onSync} disabled={syncing}>
             <Animated.View style={{ transform: [{ rotate: spinDeg }] }}>
               <Ionicons name="refresh-outline" size={16} color={syncing ? '#007AFF' : '#8E8E93'} />
@@ -492,7 +568,7 @@ function DrawerContent({
         {displayFolders.map(f => {
           const isActive = f.path === selectedFolder;
           const color = FOLDER_COLORS[f.colorKey] ?? FOLDER_COLORS.default;
-          const unread = folderUnreadCounts[f.path] ?? f.unreadCount ?? 0;
+          const unread = folderUnreadCounts[f.path] ?? 0;
           return (
             <TouchableOpacity
               key={f.path}
@@ -507,7 +583,7 @@ function DrawerContent({
               </Text>
               {unread > 0 && (
                 <View style={[d.badge, isActive && d.badgeActive]}>
-                  <Text style={[d.badgeText, isActive && d.badgeTextActive]}>{unread > 99 ? '99+' : unread}</Text>
+                  <Text style={[d.badgeText, isActive && d.badgeTextActive]}>{unread > 999 ? '999+' : unread}</Text>
                 </View>
               )}
             </TouchableOpacity>
@@ -612,7 +688,30 @@ const s = StyleSheet.create({
     shadowColor: '#000', shadowOffset: { width: 2, height: 0 },
     shadowOpacity: 0.2, shadowRadius: 8, elevation: 10,
   },
+  moveSheet: {
+    position: 'absolute', bottom: 0, left: 0, right: 0,
+    backgroundColor: '#fff',
+    borderTopLeftRadius: 16, borderTopRightRadius: 16,
+    paddingHorizontal: 16, paddingTop: 12,
+    shadowColor: '#000', shadowOffset: { width: 0, height: -2 },
+    shadowOpacity: 0.12, shadowRadius: 8,
+  },
+  moveSheetHandle: {
+    width: 36, height: 4, borderRadius: 2,
+    backgroundColor: '#D1D1D6', alignSelf: 'center', marginBottom: 14,
+  },
+  moveSheetTitle: { fontSize: 17, fontWeight: '700', color: '#1C1C1E', marginBottom: 12 },
+  folderRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    paddingVertical: 12, borderBottomWidth: 0.5, borderBottomColor: '#F0F0F0',
+  },
+  folderIcon: {
+    width: 36, height: 36, borderRadius: 8,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  folderLabel: { fontSize: 16, color: '#1C1C1E' },
 });
+
 
 const d = StyleSheet.create({
   wrap: { flex: 1, paddingHorizontal: 12 },

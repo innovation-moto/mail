@@ -1,11 +1,23 @@
 import { app, BrowserWindow } from 'electron';
 import { safeStorage } from 'electron';
+import fs from 'fs';
+import path from 'path';
 import { listAccounts } from '../db/queries/accounts';
 import { getEncryptedPassword } from '../db/queries/accounts';
-import { getUnreadCount, listEmails, getTotalUnreadCount, getDistinctFolders, getAllFolderUnreadCounts } from '../db/queries/emails';
-import { syncFolder, syncFlags, fetchFolders } from './imap';
+
+function writeLog(msg: string): void {
+  try {
+    const logPath = path.join(app.getPath('userData'), 'sync.log');
+    const line = `${new Date().toISOString()} ${msg}\n`;
+    fs.appendFileSync(logPath, line);
+  } catch {}
+}
+import { getUnreadCount, listEmails, getTotalUnreadCount, getDistinctFolders, getAllFolderUnreadCounts, getThreadUnreadCounts } from '../db/queries/emails';
+import { syncAllFolders, fetchFolders } from './imap';
 import { getAllSettings } from '../db/queries/settings';
 import { showNewMailNotification } from './notification';
+import { pushFolderStateToImap, cleanupConfigMessages, pullFilterRulesFromImap } from './filterSync';
+import { startIdleWatcher, stopAllIdleWatchers } from './imapIdle';
 
 function updateBadge(): void {
   try {
@@ -16,12 +28,13 @@ function updateBadge(): void {
 
 let syncTimer: NodeJS.Timeout | null = null;
 let isSyncing = false;
+let cleanupDone = false;
 
 // フォルダリストのメモリキャッシュ（アカウントID → フォルダパス[]）
 const folderCache: Record<string, { folders: string[]; fetchedAt: number }> = {};
 const FOLDER_CACHE_TTL = 10 * 60 * 1000; // 10分
 
-const SKIP_FOLDERS = /Trash|ゴミ箱|Deleted|Spam|Junk|迷惑|Draft|下書き|Sent|送信済み|Sent Items|Outbox/i;
+const SKIP_FOLDERS = /Trash|ゴミ箱|Deleted|Spam|Junk|迷惑|Draft|下書き|Sent|送信済み|Sent Items|Outbox|IM-Mail-Config/i;
 
 async function getFoldersToSync(account: any, password: string): Promise<string[]> {
   const now = Date.now();
@@ -54,11 +67,13 @@ async function getFoldersToSync(account: any, password: string): Promise<string[
 }
 
 export async function syncAllAccounts(win?: BrowserWindow): Promise<void> {
+  writeLog(`syncAllAccounts called, isSyncing=${isSyncing}`);
   if (isSyncing) return;
   isSyncing = true;
 
   try {
     const accounts = listAccounts();
+    writeLog(`accounts count=${accounts.length}`);
     const settings = getAllSettings();
 
     for (const account of accounts) {
@@ -70,6 +85,14 @@ export async function syncAllAccounts(win?: BrowserWindow): Promise<void> {
         password = safeStorage.decryptString(encPwd);
       } catch {
         continue;
+      }
+
+      // 初回のみ IM-Mail-Config メールをIMAPから一括削除
+      if (!cleanupDone) {
+        cleanupDone = true;
+        cleanupConfigMessages(account, password).catch((e) =>
+          console.warn('[sync] cleanupConfigMessages failed:', (e as Error).message),
+        );
       }
 
       // OAuthアカウントはトークンリフレッシュ
@@ -97,26 +120,26 @@ export async function syncAllAccounts(win?: BrowserWindow): Promise<void> {
         let totalAdded = 0;
         const beforeInboxCount = getUnreadCount(account.id, 'INBOX');
 
-        for (const folder of foldersToSync) {
-          try {
-            const result = await syncFolder(account, password, folder, 50);
-            await syncFlags(account, password, folder).catch(() => 0);
-            totalAdded += result.added;
-
-            // フォルダごとに同期完了したら即座にrendererへ通知（全フォルダ完了を待たない）
-            if (result.added > 0) {
+        // 1接続で全フォルダを順番に同期（Gmail接続過多によるタイムアウト解消）
+        const { totalAdded: added } = await syncAllFolders(
+          account,
+          password,
+          foldersToSync,
+          50,
+          (folder, folderAdded) => {
+            // フォルダごとに完了したら即座にrendererへ通知
+            if (folderAdded > 0) {
               const unreadCounts = getAllFolderUnreadCounts(account.id);
               updateBadge();
               win?.webContents.send('mail:synced', {
                 accountId: account.id,
-                added: result.added,
+                added: folderAdded,
                 unreadCounts,
               });
             }
-          } catch (folderErr) {
-            console.error(`[sync] folder=${folder} failed:`, (folderErr as Error).message);
-          }
-        }
+          },
+        );
+        totalAdded = added;
 
         // INBOX の新着通知
         const afterInboxCount = getUnreadCount(account.id, 'INBOX');
@@ -138,8 +161,16 @@ export async function syncAllAccounts(win?: BrowserWindow): Promise<void> {
           unreadCounts,
         });
         console.log(`[sync] ${account.email}: folders=${foldersToSync.length} added=${totalAdded}`);
+        writeLog(`OK account=${account.email} folders=${foldersToSync.length} added=${totalAdded}`);
+
+        // スマホで作成されたフィルタールールをIMAPから取得してローカルDBに反映
+        pullFilterRulesFromImap(account, password, account.id).catch((e) =>
+          console.warn('[sync] pullFilterRulesFromImap failed:', (e as Error).message),
+        );
       } catch (err) {
-        console.error(`[sync] Failed for ${account.email}:`, (err as Error).message);
+        const errMsg = (err as Error).message;
+        console.error(`[sync] Failed for ${account.email}:`, errMsg);
+        writeLog(`FATAL account=${account.email}: ${errMsg}`);
       }
     }
   } finally {
@@ -151,9 +182,23 @@ export function startSync(win: BrowserWindow): void {
   const settings = getAllSettings();
   const intervalMs = (settings.syncIntervalSec ?? 30) * 1000;
 
+  // 初回即時同期
+  syncAllAccounts(win).catch(console.error);
+
   syncTimer = setInterval(() => {
     syncAllAccounts(win).catch(console.error);
   }, intervalMs);
+
+  // IMAP IDLE で各アカウントの INBOX をリアルタイム監視
+  const accounts = listAccounts();
+  for (const account of accounts) {
+    const encPwd = getEncryptedPassword(account.id);
+    if (!encPwd) continue;
+    try {
+      const password = safeStorage.decryptString(encPwd);
+      startIdleWatcher(account, password, win);
+    } catch {}
+  }
 }
 
 export function stopSync(): void {
@@ -161,4 +206,5 @@ export function stopSync(): void {
     clearInterval(syncTimer);
     syncTimer = null;
   }
+  stopAllIdleWatchers();
 }

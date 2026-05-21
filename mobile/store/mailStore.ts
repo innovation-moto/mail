@@ -25,6 +25,22 @@ import {
 import { useAccountStore } from './accountStore';
 // notifications は動的インポートで読み込む（モジュールクラッシュ対策）
 
+// 一時的な接続エラーはUIに表示しない（自動リトライで回復するため）
+function isTransientError(err: unknown): boolean {
+  const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
+  return (
+    msg.includes('unexpected close') ||
+    msg.includes('connection closed') ||
+    msg.includes('connection refused') ||
+    msg.includes('econnreset') ||
+    msg.includes('econnrefused') ||
+    msg.includes('etimedout') ||
+    msg.includes('timeout') ||
+    msg.includes('network request failed') ||
+    msg.includes('socket hang up')
+  );
+}
+
 // INBOXはIMAPのSTATUS値（imapInboxCount）を下回らないよう保護しながらcountsをマージ
 function mergeUnreadCounts(
   imapInboxCount: number,
@@ -61,10 +77,18 @@ interface MailStore {
   syncAllFolders(accountId: string): Promise<void>;
   refreshUnreadCounts(accountId: string): Promise<void>;
 
+  reapplyFiltersNow(accountId: string): Promise<number>;
   markRead(id: string, uid: number, folder: string): Promise<void>;
   starEmail(id: string, uid: number, folder: string, isStarred: boolean): Promise<void>;
   deleteEmail(id: string, uid: number, folder: string): Promise<void>;
+  deleteThread(accountId: string, threadId: string, folder: string): Promise<void>;
+  moveThread(accountId: string, threadId: string, folder: string, targetFolder: string): Promise<void>;
 }
+
+const syncingAccounts = new Set<string>();
+const syncingFolders = new Set<string>();   // syncEmails の重複実行防止
+let lastFullSyncAt = 0;                     // フォアグラウンド復帰時のクールダウン用
+let fullSyncCycle = 0;                      // フラグ同期を間引くカウンター
 
 export const useMailStore = create<MailStore>((set, get) => ({
   emails: [],
@@ -103,17 +127,41 @@ export const useMailStore = create<MailStore>((set, get) => ({
 
   // バックグラウンドで全フォルダを同期（画面・emails状態は一切書き換えない）
   async syncAllFolders(accountId: string) {
+    if (syncingAccounts.has(accountId)) return;
+    // フォアグラウンド復帰時の連続呼び出しを防ぐ（60秒以内は skip）
+    const now = Date.now();
+    if (now - lastFullSyncAt < 60_000) return;
+    lastFullSyncAt = now;
+    fullSyncCycle++;
+    syncingAccounts.add(accountId);
+
     const accountStore = useAccountStore.getState();
     const account = accountStore.accounts.find((a) => a.id === accountId);
-    if (!account) return;
+    if (!account) { syncingAccounts.delete(accountId); return; }
     const password = await accountStore.getPassword(accountId);
-    if (!password) return;
+    if (!password) { syncingAccounts.delete(accountId); return; }
 
-    const { folders, selectedFolder } = get();
+    try {
+    const { selectedFolder } = get();
     const SKIP = /Trash|ゴミ箱|Deleted|Spam|Junk|迷惑|Draft|下書き|Outbox|allmail|all mail|すべてのメール|重要|Important|IM-Mail-Config/i;
+
+    // フォルダ一覧を毎回取得・更新（新規カスタムフォルダの反映のため）
+    let storefolders = get().folders;
+    try {
+      const fetched = await mailApi.folders(account, password);
+      if (fetched.length > 0) {
+        storefolders = fetched;
+        if (accountId === useAccountStore.getState().selectedAccountId) {
+          set({ folders: fetched });
+        }
+      }
+    } catch (folderErr) {
+      console.warn('[syncAllFolders] folder fetch failed:', (folderErr as Error).message);
+    }
+
     // 全フォルダ同期（システムフォルダを除く）
-    const targets = folders.length > 0
-      ? folders.filter(f => !SKIP.test(f.path)).map(f => f.path)
+    const targets = storefolders.length > 0
+      ? storefolders.filter(f => !SKIP.test(f.path)).map(f => f.path)
       : ['INBOX'];
     const ordered = ['INBOX', ...targets.filter(p => p !== 'INBOX')];
 
@@ -181,45 +229,42 @@ export const useMailStore = create<MailStore>((set, get) => ({
           if (m.starred) mailApi.action(account, password, m.fromFolder, m.uid, 'star').catch(() => {});
         }
 
-        // フラグ同期 + EXPUNGE検出
-        // ローカルの最小UIDからサーバーへ問い合わせ → 全ローカルEmailを確実にカバー
-        try {
+        // フラグ同期 + EXPUNGE検出（3サイクルに1回 = 約15分ごと）
+        // syncFlags は UID+フラグのみ取得（本文なし）なので sync より大幅に軽量
+        if (fullSyncCycle % 3 === 0) try {
           const localEntries = await getUidsForFolder(accountId, folder);
+          if (localEntries.length === 0) continue; // eslint-disable-line no-continue
+
+          // UID一覧のみ送信 → サーバーはフラグのみ返す（本文・件名なし）
           const localUids = localEntries.map(e => e.uid);
-          const minUid = localUids.length > 0 ? Math.min(...localUids) : undefined;
-
-          // minUidがあればそこから、なければ全件取得
-          const { emails: serverEmails } = await mailApi.sync(
-            account, password, folder, minUid !== undefined ? minUid - 1 : undefined, 1000,
+          const { flags: serverFlags, existingUids } = await mailApi.syncFlags(
+            account, password, folder, localUids,
           );
-          const serverUidSet = new Set(serverEmails.map(e => e.uid));
+          const serverUidSet = new Set(existingUids);
 
-          // 既読・スターフラグ更新 + サーバーにあってローカルにない新規メール追加
+          // 既読・スターフラグ更新
           let readChanged = 0;
-          let newAdded = 0;
-          for (const se of serverEmails) {
-            const local = localEntries.find(e => e.uid === se.uid);
-            if (local && (local.isRead !== se.isRead || local.isStarred !== se.isStarred)) {
-              await updateEmailFlags(local.id, se.isRead, se.isStarred);
-              if (local.isRead !== se.isRead) readChanged++;
-            } else if (!local) {
-              await upsertEmail({ ...se, accountId });
-              newAdded++;
+          for (const sf of serverFlags) {
+            const local = localEntries.find(e => e.uid === sf.uid);
+            if (local && (local.isRead !== sf.isRead || local.isStarred !== sf.isStarred)) {
+              await updateEmailFlags(local.id, sf.isRead, sf.isStarred);
+              if (local.isRead !== sf.isRead) readChanged++;
             }
           }
 
           // ローカルにあってサーバーにないUID = 移動・削除済み
           const expungedUids = localUids.filter(u => !serverUidSet.has(u));
-          console.log(`[flags] ${folder}: local=${localEntries.length} server=${serverEmails.length} expunged=${expungedUids.length} readChanged=${readChanged} newAdded=${newAdded}`);
-          if (expungedUids.length > 0 && serverEmails.length > 0) {
-            await removeExpungedEmails(accountId, folder, [...serverUidSet]);
+          console.log(`[flags] ${folder}: local=${localEntries.length} server=${existingUids.length} expunged=${expungedUids.length} readChanged=${readChanged}`);
+          if (expungedUids.length > 0 && existingUids.length > 0) {
+            await removeExpungedEmails(accountId, folder, existingUids);
           }
         } catch (flagErr) {
-          console.warn(`[syncAllFolders] expunge ${folder}:`, (flagErr as Error).message);
+          console.warn(`[syncAllFolders] flags ${folder}:`, (flagErr as Error).message);
         }
 
-        // 現在表示中のフォルダなら画面も更新（毎回最新のselectedFolderを参照）
-        if (folder === get().selectedFolder) {
+        // 現在表示中のアカウント・フォルダなら画面も更新
+        const currentSelectedAccountId = useAccountStore.getState().selectedAccountId;
+        if (folder === get().selectedFolder && accountId === currentSelectedAccountId) {
           const visibleEmails = await listEmails(accountId, folder);
           set({ emails: visibleEmails });
           const visibleThreads = await listThreads(accountId, folder);
@@ -236,8 +281,9 @@ export const useMailStore = create<MailStore>((set, get) => ({
       const dupes = await deduplicateInboxByMessageId(accountId);
       if (dupes > 0) {
         console.log(`[dedup] removed ${dupes} duplicate INBOX emails (Gmail label dedup)`);
-        // 表示中フォルダがINBOXなら再読み込み
-        if (get().selectedFolder === 'INBOX') {
+        // 表示中アカウント・フォルダがINBOXなら再読み込み
+        const currentSelectedAccountId2 = useAccountStore.getState().selectedAccountId;
+        if (get().selectedFolder === 'INBOX' && accountId === currentSelectedAccountId2) {
           const visibleEmails = await listEmails(accountId, 'INBOX');
           set({ emails: visibleEmails });
           const visibleThreads = await listThreads(accountId, 'INBOX');
@@ -265,6 +311,10 @@ export const useMailStore = create<MailStore>((set, get) => ({
       const totalUnread = await getTotalUnreadDistinct(accountId);
       await setBadgeCount(totalUnread);
     } catch {}
+
+    } finally {
+      syncingAccounts.delete(accountId);
+    }
   },
 
   async loadFolders(accountId: string) {
@@ -277,20 +327,23 @@ export const useMailStore = create<MailStore>((set, get) => ({
     set({ foldersLoading: true });
     try {
       const folders = await mailApi.folders(account, password);
-      set({ folders });
-      // IMAPから取得したINBOXの実際の未読数をimapInboxCountに保存（DB値より常に優先）
+      console.log('[loadFolders] fetched', folders.length, 'folders:', folders.map(f => f.path).join(', '));
+      // 取得完了時点で別アカウントに切り替わっていたら上書きしない
+      if (useAccountStore.getState().selectedAccountId === accountId) {
+        set({ folders });
+        console.log('[loadFolders] applied to store');
+      } else {
+        console.warn('[loadFolders] account switched, skipped');
+      }
       const inbox = folders.find(f => f.path === 'INBOX');
-      console.log('[loadFolders] inbox.unreadCount:', inbox?.unreadCount, 'folders count:', folders.length);
       if (inbox && inbox.unreadCount > 0) {
         set(s => ({
           imapInboxCount: inbox.unreadCount,
           folderUnreadCounts: { ...s.folderUnreadCounts, INBOX: inbox.unreadCount },
         }));
-        console.log('[loadFolders] imapInboxCount set to', inbox.unreadCount);
       }
     } catch (err) {
-      // フォルダ取得失敗は無視（ハードコードにフォールバック）
-      console.warn('[loadFolders] error:', err);
+      console.warn('[loadFolders] error:', (err as Error).message);
     } finally {
       set({ foldersLoading: false });
     }
@@ -302,7 +355,7 @@ export const useMailStore = create<MailStore>((set, get) => ({
       const emails = await listEmails(accountId, folder);
       set({ emails });
     } catch (err) {
-      set({ error: (err as Error).message });
+      if (!isTransientError(err)) set({ error: (err as Error).message });
     } finally {
       set({ loading: false });
     }
@@ -314,7 +367,7 @@ export const useMailStore = create<MailStore>((set, get) => ({
       const threads = await listThreads(accountId, folder);
       set({ threads });
     } catch (err) {
-      set({ error: (err as Error).message });
+      if (!isTransientError(err)) set({ error: (err as Error).message });
     } finally {
       set({ loading: false });
     }
@@ -358,12 +411,16 @@ export const useMailStore = create<MailStore>((set, get) => ({
   },
 
   async syncEmails(accountId: string, folder: string) {
+    const key = `${accountId}:${folder}`;
+    if (syncingFolders.has(key)) return;
+    syncingFolders.add(key);
+
     const accountStore = useAccountStore.getState();
     const account = accountStore.accounts.find((a) => a.id === accountId);
-    if (!account) return;
+    if (!account) { syncingFolders.delete(key); return; }
 
     const password = await accountStore.getPassword(accountId);
-    if (!password) return;
+    if (!password) { syncingFolders.delete(key); return; }
 
     set({ syncing: true, error: null });
     try {
@@ -394,9 +451,10 @@ export const useMailStore = create<MailStore>((set, get) => ({
         }
       }
 
-      // Reload from DB（同期完了時点で同じフォルダを表示中の場合のみ更新）
+      // Reload from DB（同期完了時点で同じアカウント・フォルダを表示中の場合のみ更新）
       const allEmails = await listEmails(accountId, folder);
-      if (folder === get().selectedFolder) {
+      const currentSelectedAccountId = useAccountStore.getState().selectedAccountId;
+      if (folder === get().selectedFolder && accountId === currentSelectedAccountId) {
         set({ emails: allEmails });
         const updatedThreads = await listThreads(accountId, folder);
         set({ threads: updatedThreads });
@@ -425,10 +483,50 @@ export const useMailStore = create<MailStore>((set, get) => ({
         console.warn('[syncEmails] notification error (ignored):', notifErr);
       }
     } catch (err) {
-      set({ error: (err as Error).message });
+      if (!isTransientError(err)) {
+        set({ error: (err as Error).message });
+      }
     } finally {
       set({ syncing: false });
+      syncingFolders.delete(`${accountId}:${folder}`);
     }
+  },
+
+  async reapplyFiltersNow(accountId: string): Promise<number> {
+    const accountStore = useAccountStore.getState();
+    const account = accountStore.accounts.find(a => a.id === accountId);
+    if (!account) return 0;
+    const password = await accountStore.getPassword(accountId);
+    if (!password) return 0;
+
+    // 最新のフィルタールールをMacから取得
+    try {
+      const { rules } = await mailApi.filterPull(account, password);
+      if (rules && rules.length > 0) {
+        await replaceFilterRules(accountId, rules);
+      }
+    } catch {}
+
+    // 全ローカルメールにフィルターを適用
+    const matches = await applyFilterRules(accountId);
+    for (const m of matches) {
+      if (m.toFolder && m.toFolder !== m.fromFolder) {
+        try {
+          await mailApi.action(account, password, m.fromFolder, m.uid, 'move', m.toFolder);
+        } catch {}
+      }
+      if (m.markRead) mailApi.action(account, password, m.fromFolder, m.uid, 'markRead').catch(() => {});
+      if (m.starred) mailApi.action(account, password, m.fromFolder, m.uid, 'star').catch(() => {});
+    }
+
+    // 表示を更新
+    const folder = get().selectedFolder;
+    const allEmails = await listEmails(accountId, folder);
+    set({ emails: allEmails });
+    const updatedThreads = await listThreads(accountId, folder);
+    set({ threads: updatedThreads });
+
+    return matches.filter(m => m.toFolder && m.toFolder !== m.fromFolder).length;
   },
 
   async markRead(id: string, uid: number, folder: string) {
@@ -490,6 +588,61 @@ export const useMailStore = create<MailStore>((set, get) => ({
     const password = await accountStore.getPassword(account.id);
     if (password) {
       mailApi.action(account, password, folder, uid, 'delete').catch(() => {});
+    }
+  },
+
+  async deleteThread(accountId: string, threadId: string, folder: string) {
+    const accountStore = useAccountStore.getState();
+    const accounts = accountStore.accounts;
+    const account = accounts.find(a => a.id === accountId);
+    if (!account) return;
+
+    // stateのemailsからthreadIdで絞り込む（DBのfolder条件不一致を回避）
+    const stateEmails = get().emails.filter(
+      e => (e.threadId || e.id) === threadId,
+    );
+    // stateにない場合はDBから取得（folder条件なし）
+    const threadEmails = stateEmails.length > 0
+      ? stateEmails
+      : await getThreadEmails(accountId, threadId, folder);
+
+    set((state) => ({
+      emails: state.emails.filter((e) => (e.threadId || e.id) !== threadId),
+      threads: state.threads.filter((t) => t.threadId !== threadId),
+    }));
+
+    const password = await accountStore.getPassword(accountId);
+    for (const email of threadEmails) {
+      await markDeleted(email.id);
+      if (password) {
+        mailApi.action(account, password, email.folder || folder, email.uid, 'delete').catch(() => {});
+      }
+    }
+  },
+
+  async moveThread(accountId: string, threadId: string, folder: string, targetFolder: string) {
+    const accountStore = useAccountStore.getState();
+    const accounts = accountStore.accounts;
+    const account = accounts.find(a => a.id === accountId);
+    if (!account) return;
+
+    const stateEmails = get().emails.filter(
+      e => (e.threadId || e.id) === threadId,
+    );
+    const threadEmails = stateEmails.length > 0
+      ? stateEmails
+      : await getThreadEmails(accountId, threadId, folder);
+
+    set((state) => ({
+      emails: state.emails.filter((e) => (e.threadId || e.id) !== threadId),
+      threads: state.threads.filter((t) => t.threadId !== threadId),
+    }));
+
+    const password = await accountStore.getPassword(accountId);
+    for (const email of threadEmails) {
+      if (password) {
+        mailApi.action(account, password, email.folder || folder, email.uid, 'move', targetFolder).catch(() => {});
+      }
     }
   },
 }));

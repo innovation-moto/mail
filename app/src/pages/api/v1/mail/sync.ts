@@ -12,6 +12,20 @@ type RequestBody = {
 
 type ResponseBody = { emails: Email[]; maxUid: number } | { error: string };
 
+// プロセス内の重複リクエスト防止（同一アカウント・フォルダ・sinceUid の同時実行を排除）
+const inFlight = new Map<string, number>();
+const IN_FLIGHT_TTL = 55_000; // Vercel 60s 制限より少し短く
+
+// サーバーサイドタイムアウト（Vercel の hard 60s に引っかかる前にクリーンに返す）
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) =>
+      setTimeout(() => reject(new Error('TIMEOUT')), ms),
+    ),
+  ]);
+}
+
 async function safeLogout(client: ImapFlow): Promise<void> {
   try {
     await client.logout();
@@ -74,6 +88,15 @@ export default async function handler(
     return res.status(400).json({ error: 'account is required' });
   }
 
+  // 重複リクエスト防止
+  const flightKey = `${account.email}:${folder}:${sinceUid ?? 0}`;
+  const now = Date.now();
+  const existing = inFlight.get(flightKey);
+  if (existing && now - existing < IN_FLIGHT_TTL) {
+    return res.status(429).json({ error: 'sync in progress' });
+  }
+  inFlight.set(flightKey, now);
+
   const { password, ...accountConfig } = account;
 
   const client = new ImapFlow({
@@ -83,14 +106,14 @@ export default async function handler(
     auth: { user: accountConfig.email, pass: password },
     logger: false,
     tls: { rejectUnauthorized: false },
-    connectionTimeout: 30000,
-    socketTimeout: 55000,
+    connectionTimeout: 15000,
+    socketTimeout: 20000,
   });
 
   let lock: MailboxLockObject | null = null;
 
   try {
-    await client.connect();
+    await withTimeout(client.connect(), 55_000);
     lock = await client.getMailboxLock(folder);
     const mailbox = client.mailbox;
 
@@ -167,9 +190,14 @@ export default async function handler(
 
     return res.status(200).json({ emails, maxUid });
   } catch (err) {
-    console.error('[api/v1/mail/sync]', err);
-    return res.status(500).json({ error: (err as Error).message });
+    const msg = (err as Error).message;
+    console.error('[api/v1/mail/sync]', msg);
+    if (msg === 'TIMEOUT') {
+      return res.status(504).json({ error: 'sync timeout' });
+    }
+    return res.status(500).json({ error: msg });
   } finally {
+    inFlight.delete(flightKey);
     lock?.release();
     await safeLogout(client);
   }

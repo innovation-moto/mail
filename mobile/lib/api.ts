@@ -19,23 +19,66 @@ function buildAccountPayload(account: Account, password: string): AccountWithPas
   };
 }
 
-async function post<T>(path: string, body: unknown): Promise<T> {
-  const res = await fetch(`${BASE_URL}${path}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
+// ─── AbortController 管理（同一エンドポイントの旧リクエストをキャンセル）───────
+const controllers = new Map<string, AbortController>();
 
-  if (!res.ok) {
-    let errorMsg = `HTTP ${res.status}`;
+function getSignal(key: string): AbortSignal {
+  const prev = controllers.get(key);
+  if (prev) prev.abort();
+  const ctrl = new AbortController();
+  controllers.set(key, ctrl);
+  return ctrl.signal;
+}
+
+function clearSignal(key: string) {
+  controllers.delete(key);
+}
+
+// ─── 指数バックオフ付き fetch ───────────────────────────────────────────────
+async function post<T>(
+  path: string,
+  body: unknown,
+  opts: { signal?: AbortSignal; maxRetries?: number } = {},
+): Promise<T> {
+  const { signal, maxRetries = 2 } = opts;
+  let attempt = 0;
+
+  while (true) {
     try {
-      const data = await res.json();
-      errorMsg = data.error ?? errorMsg;
-    } catch {}
-    throw new Error(errorMsg);
-  }
+      const res = await fetch(`${BASE_URL}${path}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        signal,
+      });
 
-  return res.json() as Promise<T>;
+      // 429（重複リクエスト）と 5xx はリトライ対象
+      if ((res.status === 429 || res.status >= 500) && attempt < maxRetries) {
+        const delay = Math.min(1000 * 2 ** attempt + Math.random() * 500, 16000);
+        attempt++;
+        await new Promise(r => setTimeout(r, delay));
+        continue;
+      }
+
+      if (!res.ok) {
+        let errorMsg = `HTTP ${res.status}`;
+        try {
+          const data = await res.json();
+          errorMsg = data.error ?? errorMsg;
+        } catch {}
+        throw new Error(errorMsg);
+      }
+
+      return res.json() as Promise<T>;
+    } catch (err) {
+      // AbortError はリトライしない
+      if ((err as Error).name === 'AbortError') throw err;
+      if (attempt >= maxRetries) throw err;
+      const delay = Math.min(1000 * 2 ** attempt + Math.random() * 500, 16000);
+      attempt++;
+      await new Promise(r => setTimeout(r, delay));
+    }
+  }
 }
 
 export const mailApi = {
@@ -50,6 +93,7 @@ export const mailApi = {
 
   /**
    * Sync emails from a folder (incremental by UID)
+   * 同一フォルダの旧リクエストは自動キャンセル
    */
   sync(
     account: Account,
@@ -58,12 +102,31 @@ export const mailApi = {
     sinceUid?: number,
     limit = 50,
   ): Promise<{ emails: Email[]; maxUid: number }> {
-    return post<{ emails: Email[]; maxUid: number }>('/api/v1/mail/sync', {
-      account: buildAccountPayload(account, password),
-      folder,
-      sinceUid,
-      limit,
-    });
+    const key = `sync:${account.email}:${folder}`;
+    const signal = getSignal(key);
+    const p = post<{ emails: Email[]; maxUid: number }>(
+      '/api/v1/mail/sync',
+      { account: buildAccountPayload(account, password), folder, sinceUid, limit },
+      { signal },
+    );
+    p.finally(() => clearSignal(key)).catch(() => {});
+    return p;
+  },
+
+  /**
+   * フラグのみ軽量取得（本文なし）— 既読・スター・削除検出用
+   */
+  syncFlags(
+    account: Account,
+    password: string,
+    folder: string,
+    uids: number[],
+  ): Promise<{ flags: { uid: number; isRead: boolean; isStarred: boolean }[]; existingUids: number[] }> {
+    return post<{ flags: { uid: number; isRead: boolean; isStarred: boolean }[]; existingUids: number[] }>(
+      '/api/v1/mail/flags',
+      { account: buildAccountPayload(account, password), folder, uids },
+      { maxRetries: 1 },
+    );
   },
 
   /**
@@ -83,7 +146,7 @@ export const mailApi = {
       uid,
       action,
       targetFolder,
-    });
+    }, { maxRetries: 1 });
   },
 
   /**
@@ -97,7 +160,7 @@ export const mailApi = {
     return post<{ ok: boolean }>('/api/v1/mail/send', {
       account: buildAccountPayload(account, password),
       compose,
-    });
+    }, { maxRetries: 0 }); // 送信は絶対にリトライしない
   },
 
   /**
@@ -130,9 +193,6 @@ export const mailApi = {
 
   // ─── AI ───────────────────────────────────────────────────────────
 
-  /**
-   * Summarize an email with AI
-   */
   aiSummarize(
     apiKey: string,
     subject: string,
@@ -141,9 +201,6 @@ export const mailApi = {
     return post<AiSummarizeResult>('/api/v1/ai/summarize', { apiKey, subject, bodyText });
   },
 
-  /**
-   * Generate an AI reply draft
-   */
   aiReply(
     apiKey: string,
     subject: string,
@@ -153,49 +210,6 @@ export const mailApi = {
     return post<{ reply: string }>('/api/v1/ai/reply', { apiKey, subject, bodyText, tone });
   },
 
-  /**
-   * フォルダ内の既存メールのフラグ（既読・スター）と存在確認を取得
-   */
-  syncFlags(
-    account: Account,
-    password: string,
-    folder: string,
-    uids: number[],
-  ): Promise<{ flags: { uid: number; isRead: boolean; isStarred: boolean }[]; existingUids: number[] }> {
-    return post<{ flags: { uid: number; isRead: boolean; isStarred: boolean }[]; existingUids: number[] }>(
-      '/api/v1/mail/flags',
-      { account: buildAccountPayload(account, password), folder, uids },
-    );
-  },
-
-  /**
-   * IMAPに保存されたフィルタールールを取得（Mac→スマホ同期用）
-   */
-  filterPull(
-    account: Account,
-    password: string,
-  ): Promise<{ rules: import('@/shared/types').FilterRule[] }> {
-    return post<{ rules: import('@/shared/types').FilterRule[] }>('/api/v1/filters/sync', {
-      account: buildAccountPayload(account, password),
-    });
-  },
-
-  /**
-   * IMAPに保存されたフォルダ状態を取得（Mac→スマホ同期用）
-   * { uid: folder } のマッピングを返す
-   */
-  folderStatePull(
-    account: Account,
-    password: string,
-  ): Promise<{ state: Record<string, string> }> {
-    return post<{ state: Record<string, string> }>('/api/v1/folders/state', {
-      account: buildAccountPayload(account, password),
-    });
-  },
-
-  /**
-   * Detect calendar events in an email
-   */
   aiDetectEvent(
     apiKey: string,
     subject: string,
@@ -206,6 +220,37 @@ export const mailApi = {
   ): Promise<{ event: CalendarEvent | null }> {
     return post<{ event: CalendarEvent | null }>('/api/v1/ai/detect-event', {
       apiKey, subject, bodyText, emailDate, fromName, fromAddress,
+    });
+  },
+
+  // ─── 同期・フィルター ──────────────────────────────────────────────
+
+  filterPull(
+    account: Account,
+    password: string,
+  ): Promise<{ rules: import('@/shared/types').FilterRule[] }> {
+    return post<{ rules: import('@/shared/types').FilterRule[] }>('/api/v1/filters/sync', {
+      account: buildAccountPayload(account, password),
+    });
+  },
+
+  filterPush(
+    account: Account,
+    password: string,
+    rules: import('@/shared/types').FilterRule[],
+  ): Promise<{ ok: boolean }> {
+    return post<{ ok: boolean }>('/api/v1/filters/push', {
+      account: buildAccountPayload(account, password),
+      rules,
+    });
+  },
+
+  folderStatePull(
+    account: Account,
+    password: string,
+  ): Promise<{ state: Record<string, string> }> {
+    return post<{ state: Record<string, string> }>('/api/v1/folders/state', {
+      account: buildAccountPayload(account, password),
     });
   },
 };

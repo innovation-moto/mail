@@ -14,6 +14,7 @@ import {
   listSignatures, createSignature, updateSignature, deleteSignature,
   listBlockList, addToBlockList, removeFromBlockList,
 } from '../lib/db';
+import { QuickFilterSheet } from '../components/QuickFilterSheet';
 import type { Account, FilterRule, Signature } from '@/shared/types';
 
 type Tab = 'accounts' | 'signatures' | 'filters' | 'folders' | 'ai' | 'blocklist';
@@ -132,45 +133,15 @@ function AccountsTab({ router }: { router: any }) {
 }
 
 // ─── 署名 ─────────────────────────────────────────────────────────────────────
-function SignaturesTab() {
-  const { selectedAccountId } = useAccountStore();
-  const [signatures, setSignatures] = useState<Signature[]>([]);
-  const [showForm, setShowForm] = useState(false);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [form, setForm] = useState({ name: '', content: '', isDefault: false });
-
-  useEffect(() => {
-    listSignatures(selectedAccountId ?? undefined).then(setSignatures);
-  }, [selectedAccountId]);
-
-  async function handleCreate() {
-    if (!form.name.trim() && !form.content.trim()) return;
-    await createSignature({ ...form, accountId: selectedAccountId ?? null });
-    const updated = await listSignatures(selectedAccountId ?? undefined);
-    setSignatures(updated);
-    setForm({ name: '', content: '', isDefault: false });
-    setShowForm(false);
-  }
-
-  async function handleUpdate() {
-    if (!editingId) return;
-    await updateSignature(editingId, form);
-    const updated = await listSignatures(selectedAccountId ?? undefined);
-    setSignatures(updated);
-    setEditingId(null);
-  }
-
-  async function handleDelete(id: string) {
-    Alert.alert('署名を削除', '削除しますか？', [
-      { text: 'キャンセル', style: 'cancel' },
-      { text: '削除', style: 'destructive', onPress: async () => {
-        await deleteSignature(id);
-        setSignatures(await listSignatures(selectedAccountId ?? undefined));
-      }},
-    ]);
-  }
-
-  const SigForm = ({ onSave, onCancel }: { onSave: () => void; onCancel: () => void }) => (
+type SigFormValues = { name: string; content: string; isDefault: boolean };
+type SigFormProps = {
+  form: SigFormValues;
+  setForm: React.Dispatch<React.SetStateAction<SigFormValues>>;
+  onSave: () => void;
+  onCancel: () => void;
+};
+function SigForm({ form, setForm, onSave, onCancel }: SigFormProps) {
+  return (
     <View style={s.formCard}>
       <Text style={s.formLabel}>署名名</Text>
       <TextInput
@@ -207,6 +178,46 @@ function SignaturesTab() {
       </View>
     </View>
   );
+}
+
+function SignaturesTab() {
+  const { selectedAccountId } = useAccountStore();
+  const [signatures, setSignatures] = useState<Signature[]>([]);
+  const [showForm, setShowForm] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [form, setForm] = useState<SigFormValues>({ name: '', content: '', isDefault: false });
+
+  useEffect(() => {
+    listSignatures(selectedAccountId ?? undefined).then(setSignatures);
+  }, [selectedAccountId]);
+
+  async function handleCreate() {
+    if (!form.name.trim() && !form.content.trim()) return;
+    await createSignature({ ...form, accountId: selectedAccountId ?? null });
+    const updated = await listSignatures(selectedAccountId ?? undefined);
+    setSignatures(updated);
+    setForm({ name: '', content: '', isDefault: false });
+    setShowForm(false);
+  }
+
+  async function handleUpdate() {
+    if (!editingId) return;
+    await updateSignature(editingId, form);
+    const updated = await listSignatures(selectedAccountId ?? undefined);
+    setSignatures(updated);
+    setEditingId(null);
+  }
+
+  async function handleDelete(id: string) {
+    Alert.alert('署名を削除', '削除しますか？', [
+      { text: 'キャンセル', style: 'cancel' },
+      { text: '削除', style: 'destructive', onPress: async () => {
+        await deleteSignature(id);
+        setSignatures(await listSignatures(selectedAccountId ?? undefined));
+      }},
+    ]);
+  }
+
 
   return (
     <ScrollView contentContainerStyle={{ paddingBottom: 60 }}>
@@ -217,7 +228,7 @@ function SignaturesTab() {
         </TouchableOpacity>
       </View>
 
-      {showForm && <SigForm onSave={handleCreate} onCancel={() => setShowForm(false)} />}
+      {showForm && <SigForm form={form} setForm={setForm} onSave={handleCreate} onCancel={() => setShowForm(false)} />}
 
       {signatures.length === 0 && !showForm && (
         <View style={s.emptyBox}>
@@ -229,7 +240,7 @@ function SignaturesTab() {
       {signatures.map(sig => (
         <View key={sig.id}>
           {editingId === sig.id ? (
-            <SigForm onSave={handleUpdate} onCancel={() => setEditingId(null)} />
+            <SigForm form={form} setForm={setForm} onSave={handleUpdate} onCancel={() => setEditingId(null)} />
           ) : (
             <View style={s.itemCard}>
               <View style={{ flex: 1 }}>
@@ -257,19 +268,47 @@ function SignaturesTab() {
 
 // ─── フィルター ────────────────────────────────────────────────────────────────
 function FiltersTab() {
-  const { selectedAccountId } = useAccountStore();
+  const { selectedAccountId, accounts, getPassword } = useAccountStore();
+  const { folders, reapplyFiltersNow } = useMailStore();
   const [rules, setRules] = useState<FilterRule[]>([]);
+  const [showForm, setShowForm] = useState(false);
+  const [applying, setApplying] = useState(false);
 
   useEffect(() => {
     if (selectedAccountId) listFilterRules(selectedAccountId).then(setRules);
   }, [selectedAccountId]);
+
+  async function pushRulesToImap(updatedRules: FilterRule[]) {
+    if (!selectedAccountId) return;
+    const account = accounts.find(a => a.id === selectedAccountId);
+    if (!account) return;
+    const password = await getPassword(selectedAccountId);
+    if (!password) return;
+    mailApi.filterPush(account, password, updatedRules).catch(() => {});
+  }
+
+  async function handleReapply() {
+    if (!selectedAccountId) return;
+    setApplying(true);
+    try {
+      const moved = await reapplyFiltersNow(selectedAccountId);
+      Alert.alert('完了', moved > 0 ? `${moved}件のメールを移動しました` : '移動対象のメールはありませんでした');
+      setRules(await listFilterRules(selectedAccountId));
+    } catch {
+      Alert.alert('エラー', 'フィルターの再適用に失敗しました');
+    } finally {
+      setApplying(false);
+    }
+  }
 
   async function handleDelete(id: string, name: string) {
     Alert.alert('フィルターを削除', `「${name || 'このルール'}」を削除しますか？`, [
       { text: 'キャンセル', style: 'cancel' },
       { text: '削除', style: 'destructive', onPress: async () => {
         await deleteFilterRule(id);
-        if (selectedAccountId) setRules(await listFilterRules(selectedAccountId));
+        const updated = selectedAccountId ? await listFilterRules(selectedAccountId) : [];
+        setRules(updated);
+        pushRulesToImap(updated);
       }},
     ]);
   }
@@ -279,10 +318,39 @@ function FiltersTab() {
 
   return (
     <ScrollView contentContainerStyle={{ paddingBottom: 60 }}>
-      <Text style={s.sectionLabel}>フィルタールール</Text>
-      <Text style={s.sectionNote}>メール詳細画面の <Ionicons name="funnel-outline" size={12} color="#8E8E93" /> から新規作成できます</Text>
+      <View style={s.sectionHeader}>
+        <Text style={s.sectionLabel}>フィルタールール</Text>
+        <View style={{ flexDirection: 'row', gap: 8 }}>
+          <TouchableOpacity
+            style={[s.addRowBtn, { paddingHorizontal: 10, flexDirection: 'row', alignItems: 'center', gap: 4 }]}
+            onPress={handleReapply}
+            disabled={applying}
+          >
+            {applying
+              ? <ActivityIndicator size="small" color="#007AFF" />
+              : <><Ionicons name="refresh" size={15} color="#007AFF" /><Text style={{ color: '#007AFF', fontSize: 13 }}>再適用</Text></>
+            }
+          </TouchableOpacity>
+          <TouchableOpacity style={s.addRowBtn} onPress={() => setShowForm(true)}>
+            <Ionicons name="add" size={20} color="#007AFF" />
+          </TouchableOpacity>
+        </View>
+      </View>
 
-      {rules.length === 0 && (
+      {showForm && (
+        <QuickFilterSheet
+          accountId={selectedAccountId ?? ''}
+          folders={folders}
+          onClose={async () => {
+            setShowForm(false);
+            const updated = selectedAccountId ? await listFilterRules(selectedAccountId) : [];
+            setRules(updated);
+            pushRulesToImap(updated);
+          }}
+        />
+      )}
+
+      {rules.length === 0 && !showForm && (
         <View style={s.emptyBox}>
           <Ionicons name="funnel-outline" size={36} color="#C7C7CC" />
           <Text style={s.emptyText}>フィルタールールがありません</Text>

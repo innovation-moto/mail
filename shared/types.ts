@@ -106,6 +106,7 @@ export interface ComposeData {
   bodyHtml?: string;
   replyToMessageId?: string;
   forwardFrom?: string;
+  attachments?: Array<{ filename: string; content: string; contentType: string }>;
 }
 
 export interface BlockEntry {
@@ -123,6 +124,7 @@ export interface Settings {
   notificationsEnabled: boolean;
   notifyHighOnly: boolean;
   syncIntervalSec: number;
+  googleCalendarEmail: string;
 }
 
 export type AiTone = 'polite' | 'casual' | 'brief';
@@ -156,6 +158,19 @@ export interface CalendarEvent {
   location: string;    // オンライン or 地域名
   isOnline: boolean;
   description: string;
+}
+
+export interface ThreadSummary {
+  threadId: string;
+  subject: string;
+  latestFrom: { name: string; address: string };
+  latestDate: number;
+  emailCount: number;
+  unreadCount: number;
+  hasAttachments: boolean;
+  latestEmailId: string;
+  aiPriority: string | null;
+  folder: string;
 }
 
 export interface Signature {
