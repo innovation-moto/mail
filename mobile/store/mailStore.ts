@@ -85,10 +85,19 @@ interface MailStore {
   moveThread(accountId: string, threadId: string, folder: string, targetFolder: string): Promise<void>;
 }
 
+// ゴミ箱フォルダ判定（specialUse または パスパターン）
+function isTrashFolder(folder: string, folders: import('@/shared/types').Folder[]): boolean {
+  const trashPath = folders.find(f => f.specialUse === '\\Trash')?.path;
+  if (trashPath && folder === trashPath) return true;
+  return /^(Trash|ゴミ箱|Deleted Items?|Deleted)$/i.test(folder);
+}
+
 const syncingAccounts = new Set<string>();
 const syncingFolders = new Set<string>();   // syncEmails の重複実行防止
 let lastFullSyncAt = 0;                     // フォアグラウンド復帰時のクールダウン用
 let fullSyncCycle = 0;                      // フラグ同期を間引くカウンター
+let lastFilterPullAt = 0;                   // filterPull を30分に1回に間引く
+let lastFolderStatePullAt = 0;              // folderStatePull を30分に1回に間引く
 
 export const useMailStore = create<MailStore>((set, get) => ({
   emails: [],
@@ -166,26 +175,33 @@ export const useMailStore = create<MailStore>((set, get) => ({
       : ['INBOX'];
     const ordered = ['INBOX', ...targets.filter(p => p !== 'INBOX')];
 
-    // --- Macからフィルタールールを同期（IMAP経由） ---
-    try {
-      const { rules } = await mailApi.filterPull(account, password);
-      if (rules && rules.length > 0) {
-        await replaceFilterRules(accountId, rules);
-        console.log(`[filterSync] pulled ${rules.length} rules from IMAP`);
+    // --- Macからフィルタールールを同期（IMAP経由）--- 30分に1回だけ実行 ---
+    const nowForPull = Date.now();
+    if (nowForPull - lastFilterPullAt >= 30 * 60_000) {
+      lastFilterPullAt = nowForPull;
+      try {
+        const { rules } = await mailApi.filterPull(account, password);
+        if (rules && rules.length > 0) {
+          await replaceFilterRules(accountId, rules);
+          console.log(`[filterSync] pulled ${rules.length} rules from IMAP`);
+        }
+      } catch (syncErr) {
+        console.warn('[filterSync] pull failed (ignored):', (syncErr as Error).message);
       }
-    } catch (syncErr) {
-      console.warn('[filterSync] pull failed (ignored):', (syncErr as Error).message);
     }
 
-    // --- Macのフォルダ状態を同期（移動済みメールをINBOXから退避） ---
-    try {
-      const { state } = await mailApi.folderStatePull(account, password);
-      if (state && Object.keys(state).length > 0) {
-        const moved = await applyFolderState(accountId, state);
-        console.log(`[folderState] applied ${moved} folder moves from Mac state`);
+    // --- Macのフォルダ状態を同期（移動済みメールをINBOXから退避）--- 30分に1回だけ実行 ---
+    if (nowForPull - lastFolderStatePullAt >= 30 * 60_000) {
+      lastFolderStatePullAt = nowForPull;
+      try {
+        const { state } = await mailApi.folderStatePull(account, password);
+        if (state && Object.keys(state).length > 0) {
+          const moved = await applyFolderState(accountId, state);
+          console.log(`[folderState] applied ${moved} folder moves from Mac state`);
+        }
+      } catch (stateErr) {
+        console.warn('[folderState] pull failed (ignored):', (stateErr as Error).message);
       }
-    } catch (stateErr) {
-      console.warn('[folderState] pull failed (ignored):', (stateErr as Error).message);
     }
 
     const beforeCounts = await getUnreadCountsByFolder(accountId);
@@ -353,7 +369,8 @@ export const useMailStore = create<MailStore>((set, get) => ({
   async loadEmails(accountId: string, folder: string) {
     set({ loading: true, error: null });
     try {
-      const emails = await listEmails(accountId, folder);
+      const trash = isTrashFolder(folder, get().folders);
+      const emails = await listEmails(accountId, folder, 100, 0, trash);
       set({ emails });
     } catch (err) {
       if (!isTransientError(err)) set({ error: (err as Error).message });
@@ -365,7 +382,8 @@ export const useMailStore = create<MailStore>((set, get) => ({
   async loadThreads(accountId: string, folder: string) {
     set({ loading: true, error: null });
     try {
-      const threads = await listThreads(accountId, folder);
+      const trash = isTrashFolder(folder, get().folders);
+      const threads = await listThreads(accountId, folder, 50, 0, trash);
       set({ threads });
     } catch (err) {
       if (!isTransientError(err)) set({ error: (err as Error).message });
@@ -423,18 +441,32 @@ export const useMailStore = create<MailStore>((set, get) => ({
     const password = await accountStore.getPassword(accountId);
     if (!password) { syncingFolders.delete(key); return; }
 
+    // ゴミ箱・送信済み等は実際のIMAPフォルダパスに解決（Trash→Deleted Items 等）
+    const SPECIAL_USE_MAP: Record<string, string> = {
+      Trash: '\\Trash', ゴミ箱: '\\Trash', Deleted: '\\Trash',
+      Sent: '\\Sent', 送信済み: '\\Sent', 'Sent Items': '\\Sent',
+      Draft: '\\Drafts', 下書き: '\\Drafts',
+    };
+    const specialUse = Object.entries(SPECIAL_USE_MAP).find(([k]) =>
+      new RegExp(`^${k}$`, 'i').test(folder)
+    )?.[1];
+    const imapFolder = specialUse
+      ? (get().folders.find(f => f.specialUse === specialUse)?.path ?? folder)
+      : folder;
+
     set({ syncing: true, error: null });
     try {
-      const sinceUid = await getMaxUid(accountId, folder);
-      const { emails } = await mailApi.sync(account, password, folder, sinceUid || undefined);
+      // ゴミ箱等は常に最新50件を取得（UID追跡せず）、それ以外はインクリメンタル同期
+      const sinceUid = specialUse ? undefined : (await getMaxUid(accountId, folder) || undefined);
+      const { emails } = await mailApi.sync(account, password, imapFolder, sinceUid);
 
       // 同期前の未読数を記録（新着検知用）
       const beforeCounts = await getUnreadCountsByFolder(accountId);
       const beforeInboxUnread = beforeCounts['INBOX'] ?? 0;
 
-      // Persist to SQLite
+      // Persist to SQLite（ゴミ箱等は表示フォルダ名に正規化して保存）
       for (const email of emails) {
-        await upsertEmail({ ...email, accountId });
+        await upsertEmail({ ...email, folder, accountId });
       }
 
       // フィルタールール適用（ローカルDB更新 + IMAPサーバー移動）
@@ -453,11 +485,12 @@ export const useMailStore = create<MailStore>((set, get) => ({
       }
 
       // Reload from DB（同期完了時点で同じアカウント・フォルダを表示中の場合のみ更新）
-      const allEmails = await listEmails(accountId, folder);
+      const trash = isTrashFolder(folder, get().folders);
+      const allEmails = await listEmails(accountId, folder, 100, 0, trash);
       const currentSelectedAccountId = useAccountStore.getState().selectedAccountId;
       if (folder === get().selectedFolder && accountId === currentSelectedAccountId) {
         set({ emails: allEmails });
-        const updatedThreads = await listThreads(accountId, folder);
+        const updatedThreads = await listThreads(accountId, folder, 50, 0, trash);
         set({ threads: updatedThreads });
       }
 
@@ -580,16 +613,40 @@ export const useMailStore = create<MailStore>((set, get) => ({
     const account = accountStore.getSelectedAccount();
     if (!account) return;
 
+    // 削除前に未読かどうか確認
+    const target = get().emails.find((e) => e.id === id);
+    const wasUnread = target ? !target.isRead : false;
+
     set((state) => ({
       emails: state.emails.filter((e) => e.id !== id),
     }));
 
-    await markDeleted(id);
-
-    const password = await accountStore.getPassword(account.id);
-    if (password) {
-      mailApi.action(account, password, folder, uid, 'delete').catch(() => {});
+    // バッジを楽観的に即更新（imapInboxCountも同時に減らさないとmergeで戻される）
+    if (wasUnread) {
+      set((s) => {
+        const newFolder = Math.max(0, (s.folderUnreadCounts[folder] ?? 0) - 1);
+        const newImap   = folder === 'INBOX' ? Math.max(0, s.imapInboxCount - 1) : s.imapInboxCount;
+        const newCounts = { ...s.folderUnreadCounts, [folder]: newFolder };
+        return { folderUnreadCounts: newCounts, imapInboxCount: newImap };
+      });
+      const total = Object.values(get().folderUnreadCounts).reduce((a, b) => a + b, 0);
+      import('../lib/notifications').then(({ setBadgeCount }) => setBadgeCount(Math.max(0, total))).catch(() => {});
     }
+
+    // DB・IMAP はバックグラウンドで処理
+    const trashPath = get().folders.find(f => f.specialUse === '\\Trash')?.path;
+    markDeleted(id).then(async () => {
+      const password = await accountStore.getPassword(account.id);
+      if (password) {
+        mailApi.action(account, password, folder, uid, 'delete', trashPath).catch(() => {});
+      }
+      // DB確定後に正確な値で再同期
+      const counts = await getUnreadCountsByFolder(account.id);
+      set((s) => ({ folderUnreadCounts: mergeUnreadCounts(s.imapInboxCount, counts) }));
+      const { setBadgeCount } = await import('../lib/notifications');
+      const totalUnread = await getTotalUnreadDistinct(account.id);
+      setBadgeCount(totalUnread).catch(() => {});
+    }).catch(() => {});
   },
 
   async deleteThread(accountId: string, threadId: string, folder: string) {
@@ -607,18 +664,44 @@ export const useMailStore = create<MailStore>((set, get) => ({
       ? stateEmails
       : await getThreadEmails(accountId, threadId, folder);
 
+    // スレッドの未読数を把握
+    const thread = get().threads.find((t) => t.threadId === threadId);
+    const unreadDelta = thread?.unreadCount ?? threadEmails.filter((e) => !e.isRead).length;
+
     set((state) => ({
       emails: state.emails.filter((e) => (e.threadId || e.id) !== threadId),
       threads: state.threads.filter((t) => t.threadId !== threadId),
     }));
 
-    const password = await accountStore.getPassword(accountId);
-    for (const email of threadEmails) {
-      await markDeleted(email.id);
-      if (password) {
-        mailApi.action(account, password, email.folder || folder, email.uid, 'delete').catch(() => {});
-      }
+    // バッジを楽観的に即更新（imapInboxCountも同時に減らさないとmergeで戻される）
+    if (unreadDelta > 0) {
+      set((s) => {
+        const newFolder = Math.max(0, (s.folderUnreadCounts[folder] ?? 0) - unreadDelta);
+        const newImap   = folder === 'INBOX' ? Math.max(0, s.imapInboxCount - unreadDelta) : s.imapInboxCount;
+        const newCounts = { ...s.folderUnreadCounts, [folder]: newFolder };
+        return { folderUnreadCounts: newCounts, imapInboxCount: newImap };
+      });
+      const total = Object.values(get().folderUnreadCounts).reduce((a, b) => a + b, 0);
+      import('../lib/notifications').then(({ setBadgeCount }) => setBadgeCount(Math.max(0, total))).catch(() => {});
     }
+
+    // DB・IMAP はバックグラウンドで処理
+    const trashPath = get().folders.find(f => f.specialUse === '\\Trash')?.path;
+    (async () => {
+      const password = await accountStore.getPassword(accountId);
+      for (const email of threadEmails) {
+        await markDeleted(email.id);
+        if (password) {
+          mailApi.action(account, password, email.folder || folder, email.uid, 'delete', trashPath).catch(() => {});
+        }
+      }
+      // DB確定後に正確な値で再同期
+      const counts = await getUnreadCountsByFolder(accountId);
+      set((s) => ({ folderUnreadCounts: mergeUnreadCounts(s.imapInboxCount, counts) }));
+      const { setBadgeCount } = await import('../lib/notifications');
+      const totalUnread = await getTotalUnreadDistinct(accountId);
+      setBadgeCount(totalUnread).catch(() => {});
+    })().catch(() => {});
   },
 
   async moveThread(accountId: string, threadId: string, folder: string, targetFolder: string) {
