@@ -2,7 +2,7 @@ import React, { useEffect, useCallback, useState, useRef } from 'react';
 import {
   View, Text, TouchableOpacity, ActivityIndicator,
   RefreshControl, StyleSheet, Modal, Animated, Dimensions,
-  TextInput, SectionList, ScrollView, Image, AppState, AppStateStatus,
+  TextInput, SectionList, ScrollView, Image, AppState, AppStateStatus, Alert,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BlurView } from 'expo-blur';
@@ -13,6 +13,8 @@ import { useMailStore } from '../store/mailStore';
 import EmailItem from '../components/EmailItem';
 import SenderAvatar from '../components/SenderAvatar';
 import { SwipeableThreadItem } from '../components/SwipeableThreadItem';
+import { searchThreads, addToBlockList, getRecentEmailsForSearch, getAppSetting, setAppSetting } from '../lib/db';
+import { mailApi } from '../lib/api';
 import type { Email, Folder, ThreadSummary } from '@/shared/types';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
@@ -42,7 +44,8 @@ function folderMeta(folder: Folder): FolderMeta {
   if (su === '\\inbox'   || path === 'inbox')                               return { label: '受信トレイ',     icon: 'mail-outline',         colorKey: 'inbox' };
   if (su === '\\sent'    || path.includes('sent'))                          return { label: '送信済み',       icon: 'paper-plane-outline',  colorKey: 'sent' };
   if (su === '\\drafts'  || path.includes('draft'))                         return { label: '下書き',         icon: 'document-text-outline', colorKey: 'drafts' };
-  if (su === '\\trash'   || path.includes('trash') || path.includes('deleted')) return { label: 'ゴミ箱',    icon: 'trash-outline',        colorKey: 'trash' };
+  const topPath = path.split('/')[0];
+  if (su === '\\trash'   || topPath === 'trash' || topPath === 'deleted') return { label: 'ゴミ箱',    icon: 'trash-outline',        colorKey: 'trash' };
   if (su === '\\junk'    || path.includes('spam')  || path.includes('junk'))    return { label: '迷惑メール', icon: 'warning-outline',      colorKey: 'spam' };
   if (su === '\\starred' || su === '\\flagged' || path.includes('starred') || path.includes('flagged') || path.includes('スター')) return { label: 'スター付き', icon: 'star-outline', colorKey: 'starred' };
   if (su === '\\archive' || path.includes('archive'))                        return { label: 'アーカイブ',    icon: 'archive-outline',      colorKey: 'archive' };
@@ -100,17 +103,23 @@ export default function InboxScreen() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [searchVisible, setSearchVisible] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<ThreadSummary[] | null>(null);
+  const [searching, setSearching] = useState(false);
+  const [isSmartSearch, setIsSmartSearch] = useState(false);
+  const [smartSearchAnswer, setSmartSearchAnswer] = useState('');
+  const [smartSearching, setSmartSearching] = useState(false);
   const drawerAnim = useRef(new Animated.Value(-DRAWER_WIDTH)).current;
   const spinAnim = useRef(new Animated.Value(0)).current;
   const spinLoop = useRef<Animated.CompositeAnimation | null>(null);
 
   const [moveTarget, setMoveTarget] = useState<ThreadSummary | null>(null);
 
-  const { accounts, selectedAccountId, selectAccount, initialized } = useAccountStore();
+  const { accounts, selectedAccountId, selectAccount, initialized, openAiKey } = useAccountStore();
   const {
     emails, threads, folders, folderUnreadCounts, selectedFolder, loading, syncing, error,
-    loadEmails, loadThreads, selectThread, syncEmails, syncAllFolders, loadFolders, setFolder, refreshUnreadCounts,
-    markRead, deleteThread, moveThread,
+    hasMoreThreads, loadingMoreThreads, backfillingOlderEmails,
+    loadEmails, loadThreads, loadMoreThreads, selectThread, syncEmails, syncAllFolders, loadFolders, setFolder, refreshUnreadCounts,
+    markRead, deleteThread, moveThread, spamThread, markAllRead,
   } = useMailStore();
 
   // syncing中はアイコンをスピン
@@ -138,13 +147,67 @@ export default function InboxScreen() {
     return FALLBACK_FOLDERS.find(f => f.path === selectedFolder)?.label ?? selectedFolder;
   })();
 
-  const displayThreads = searchQuery.trim()
-    ? threads.filter(t => {
-        const q = searchQuery.toLowerCase();
-        return t.subject.toLowerCase().includes(q) ||
-          (t.latestFrom.name || t.latestFrom.address).toLowerCase().includes(q);
-      })
-    : threads;
+  // 検索クエリをDB全文検索（件名・差出人・本文、フォルダ横断）。300msデバウンス。
+  useEffect(() => {
+    setIsSmartSearch(false);
+    setSmartSearchAnswer('');
+    const q = searchQuery.trim();
+    if (!q || !selectedAccountId) {
+      setSearchResults(null);
+      setSearching(false);
+      return;
+    }
+    setSearching(true);
+    const timer = setTimeout(() => {
+      searchThreads(selectedAccountId, q)
+        .then(setSearchResults)
+        .catch(() => setSearchResults([]))
+        .finally(() => setSearching(false));
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [searchQuery, selectedAccountId]);
+
+  function emailToThread(e: Email): ThreadSummary {
+    return {
+      threadId: e.id,
+      subject: e.subject,
+      latestFrom: e.from,
+      latestDate: e.date,
+      emailCount: 1,
+      unreadCount: e.isRead ? 0 : 1,
+      hasAttachments: e.hasAttachments,
+      latestEmailId: e.id,
+      aiPriority: e.aiPriority ?? null,
+      folder: e.folder,
+    };
+  }
+
+  async function handleSmartSearch() {
+    const q = searchQuery.trim();
+    if (!q || !selectedAccountId) return;
+    if (!openAiKey) {
+      Alert.alert('AI機能が未設定です', '設定 → AI でAPIキーを登録してください');
+      return;
+    }
+    setIsSmartSearch(true);
+    setSmartSearching(true);
+    setSmartSearchAnswer('');
+    try {
+      const recent = await getRecentEmailsForSearch(selectedAccountId, 200);
+      const payload = recent.map(e => ({ id: e.id, from: e.from, subject: e.subject, date: e.date, bodyText: e.bodyText }));
+      const { answer, ids } = await mailApi.aiSmartSearch(openAiKey, q, payload);
+      const idSet = new Set(ids);
+      const matched = recent.filter(e => idSet.has(e.id)).map(emailToThread);
+      setSmartSearchAnswer(answer);
+      setSearchResults(matched);
+    } catch {
+      Alert.alert('エラー', 'AIスマート検索に失敗しました');
+    } finally {
+      setSmartSearching(false);
+    }
+  }
+
+  const displayThreads = searchQuery.trim() ? (searchResults ?? []) : threads;
 
   const sections = groupByDate(displayThreads);
 
@@ -242,6 +305,25 @@ export default function InboxScreen() {
     closeDrawer();
   };
 
+  const handleReportSpam = (target: ThreadSummary) => {
+    Alert.alert(
+      '迷惑メールとして報告',
+      `${target.latestFrom.name || target.latestFrom.address} からのメールを迷惑メールフォルダに移動しますか？`,
+      [
+        { text: 'キャンセル', style: 'cancel' },
+        {
+          text: '報告', style: 'destructive',
+          onPress: () => {
+            if (selectedAccountId) {
+              spamThread(selectedAccountId, target.threadId, target.folder || selectedFolder);
+            }
+            setMoveTarget(null);
+          },
+        },
+      ],
+    );
+  };
+
   if (!initialized) {
     return <SafeAreaView style={s.container}><ActivityIndicator style={{ flex: 1 }} /></SafeAreaView>;
   }
@@ -303,6 +385,17 @@ export default function InboxScreen() {
               {/* 更新ボタン + 検索ボタン（ひとつのglass pill） */}
               <BlurView intensity={55} tint="light" style={s.headerPill}>
                 <View style={s.headerPillInner}>
+                  {threads.some(t => t.unreadCount > 0) && (
+                    <>
+                      <TouchableOpacity
+                        style={s.pillBtn}
+                        onPress={() => selectedAccountId && markAllRead(selectedAccountId, selectedFolder)}
+                      >
+                        <Ionicons name="checkmark-done-outline" size={18} color="#3C3C43" />
+                      </TouchableOpacity>
+                      <View style={s.pillDivider} />
+                    </>
+                  )}
                   <TouchableOpacity
                     style={s.pillBtn}
                     onPress={() => selectedAccountId && syncEmails(selectedAccountId, selectedFolder)}
@@ -350,6 +443,22 @@ export default function InboxScreen() {
               autoFocus
               clearButtonMode="while-editing"
             />
+            {searching && <ActivityIndicator size="small" color="#8E8E93" style={{ marginLeft: 6 }} />}
+            {!!searchQuery.trim() && (
+              <TouchableOpacity onPress={handleSmartSearch} disabled={smartSearching} style={{ marginLeft: 8 }}>
+                {smartSearching
+                  ? <ActivityIndicator size="small" color="#AF52DE" />
+                  : <Ionicons name="sparkles" size={18} color={isSmartSearch ? '#AF52DE' : '#8E8E93'} />
+                }
+              </TouchableOpacity>
+            )}
+          </View>
+        )}
+
+        {isSmartSearch && !!smartSearchAnswer && (
+          <View style={s.smartSearchBanner}>
+            <Ionicons name="sparkles" size={14} color="#AF52DE" style={{ marginRight: 6, marginTop: 1 }} />
+            <Text style={s.smartSearchText}>{smartSearchAnswer}</Text>
           </View>
         )}
 
@@ -389,6 +498,16 @@ export default function InboxScreen() {
                 <Text style={s.emptyTitle}>メールがありません</Text>
               </View>
             }
+            ListFooterComponent={
+              (loadingMoreThreads || backfillingOlderEmails) ? (
+                <View style={{ paddingVertical: 16, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+                  <ActivityIndicator size="small" color="#007AFF" />
+                  {backfillingOlderEmails && <Text style={{ fontSize: 12, color: '#8E8E93' }}>過去のメールを取得中...</Text>}
+                </View>
+              ) : null
+            }
+            onEndReached={() => selectedAccountId && loadMoreThreads(selectedAccountId)}
+            onEndReachedThreshold={0.4}
             contentContainerStyle={sections.length === 0 ? { flex: 1 } : { paddingBottom: 100 }}
             stickySectionHeadersEnabled={false}
           />
@@ -416,6 +535,38 @@ export default function InboxScreen() {
               <View style={[s.moveSheet, { paddingBottom: insets.bottom + 12 }]}>
                 <View style={s.moveSheetHandle} />
                 <Text style={s.moveSheetTitle}>フォルダへ移動</Text>
+                <TouchableOpacity
+                  style={s.folderRow}
+                  onPress={() => moveTarget && handleReportSpam(moveTarget)}
+                >
+                  <View style={[s.folderIcon, { backgroundColor: '#FFE5E5' }]}>
+                    <Ionicons name="warning-outline" size={18} color="#FF3B30" />
+                  </View>
+                  <Text style={[s.folderLabel, { color: '#FF3B30' }]}>迷惑メールとして報告</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={s.folderRow}
+                  onPress={() => {
+                    const target = moveTarget;
+                    if (!target || !selectedAccountId) return;
+                    const address = target.latestFrom.address;
+                    setMoveTarget(null);
+                    Alert.alert('送信者をブロック', `${address} をブロックしますか？\n今後このアドレスからのメールは自動的に削除されます。`, [
+                      { text: 'キャンセル', style: 'cancel' },
+                      {
+                        text: 'ブロック', style: 'destructive', onPress: async () => {
+                          await addToBlockList(selectedAccountId, address);
+                        },
+                      },
+                    ]);
+                  }}
+                >
+                  <View style={[s.folderIcon, { backgroundColor: '#FFE5E5' }]}>
+                    <Ionicons name="ban-outline" size={18} color="#FF3B30" />
+                  </View>
+                  <Text style={[s.folderLabel, { color: '#FF3B30' }]}>送信者をブロック</Text>
+                </TouchableOpacity>
+                <View style={{ height: 0.5, backgroundColor: '#F0F0F0', marginVertical: 4 }} />
                 <ScrollView bounces={false} style={{ maxHeight: 360 }}>
                   {moveFolders.map(f => {
                     const clr = FOLDER_COLORS[f.colorKey] ?? FOLDER_COLORS.default;
@@ -485,6 +636,29 @@ function DrawerContent({
   }, [syncing]);
   const spinDeg = spinAnim.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '360deg'] });
 
+  // フォルダ並び替え（アカウントごとにローカルSQLiteへ保存）
+  const [reorderMode, setReorderMode] = useState(false);
+  const [orderedPaths, setOrderedPaths] = useState<string[]>([]);
+  const orderKey = selectedAccountId ? `folderOrder:${selectedAccountId}` : null;
+
+  useEffect(() => {
+    if (!orderKey) { setOrderedPaths([]); return; }
+    getAppSetting(orderKey).then(raw => {
+      if (!raw) { setOrderedPaths([]); return; }
+      try { setOrderedPaths(JSON.parse(raw)); } catch { setOrderedPaths([]); }
+    });
+  }, [orderKey]);
+
+  function moveFolder(path: string, direction: -1 | 1, currentOrder: string[]) {
+    const idx = currentOrder.indexOf(path);
+    const newIdx = idx + direction;
+    if (idx === -1 || newIdx < 0 || newIdx >= currentOrder.length) return;
+    const next = [...currentOrder];
+    [next[idx], next[newIdx]] = [next[newIdx], next[idx]];
+    setOrderedPaths(next);
+    if (orderKey) setAppSetting(orderKey, JSON.stringify(next)).catch(() => {});
+  }
+
   // サーバーフォルダがあればそれを使い、なければフォールバック
   if (folders.length > 0) {
     console.log('[drawer] folders from store:', folders.map(f => f.path).join(', '));
@@ -492,7 +666,7 @@ function DrawerContent({
     console.log('[drawer] folders empty, showing fallback');
   }
   type DisplayFolder = { path: string; label: string; icon: IconName; colorKey: keyof typeof FOLDER_COLORS; unreadCount?: number };
-  const displayFolders: DisplayFolder[] =
+  const rawDisplayFolders: DisplayFolder[] =
     folders.length > 0
       ? folders
           .filter(f => {
@@ -506,6 +680,8 @@ function DrawerContent({
             if (su === '\\important' || p.includes('重要') || p.includes('important')) return false;
             // 内部設定フォルダは非表示
             if (p === 'im-mail-config') return false;
+            // Deleted/xxx, Trash/xxx などゴミ箱配下のサブフォルダは非表示
+            if ((p.startsWith('deleted/') || p.startsWith('trash/'))) return false;
             return true;
           })
           .map(f => {
@@ -513,6 +689,14 @@ function DrawerContent({
             return { path: f.path, label: meta.label, icon: meta.icon, colorKey: meta.colorKey, unreadCount: f.unreadCount };
           })
       : FALLBACK_FOLDERS;
+
+  // 保存済み並び順 + 新規フォルダは末尾に追加
+  const displayFolders: DisplayFolder[] = orderedPaths.length > 0
+    ? [
+        ...orderedPaths.map(p => rawDisplayFolders.find(f => f.path === p)).filter((f): f is DisplayFolder => !!f),
+        ...rawDisplayFolders.filter(f => !orderedPaths.includes(f.path)),
+      ]
+    : rawDisplayFolders;
 
   return (
     <View style={[d.wrap, { paddingTop: insets.top + 4 }]}>
@@ -558,22 +742,29 @@ function DrawerContent({
         {/* フォルダ一覧（PCと同じカラーアイコン） */}
         <View style={d.folderHeader}>
           <Text style={d.sectionLabel}>フォルダ {folders.length > 0 ? `(${folders.length})` : '(未取得)'}</Text>
-          <TouchableOpacity style={d.syncBtn} onPress={onSync} disabled={syncing}>
-            <Animated.View style={{ transform: [{ rotate: spinDeg }] }}>
-              <Ionicons name="refresh-outline" size={16} color={syncing ? '#007AFF' : '#8E8E93'} />
-            </Animated.View>
-          </TouchableOpacity>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginLeft: 'auto' }}>
+            <TouchableOpacity style={[d.syncBtn, { marginLeft: 0 }]} onPress={() => setReorderMode(v => !v)}>
+              <Ionicons name={reorderMode ? 'checkmark' : 'reorder-three-outline'} size={16} color={reorderMode ? '#007AFF' : '#8E8E93'} />
+            </TouchableOpacity>
+            <TouchableOpacity style={d.syncBtn} onPress={onSync} disabled={syncing}>
+              <Animated.View style={{ transform: [{ rotate: spinDeg }] }}>
+                <Ionicons name="refresh-outline" size={16} color={syncing ? '#007AFF' : '#8E8E93'} />
+              </Animated.View>
+            </TouchableOpacity>
+          </View>
         </View>
 
-        {displayFolders.map(f => {
+        {displayFolders.map((f, index) => {
           const isActive = f.path === selectedFolder;
           const color = FOLDER_COLORS[f.colorKey] ?? FOLDER_COLORS.default;
           const unread = folderUnreadCounts[f.path] ?? 0;
+          const currentOrder = displayFolders.map(df => df.path);
           return (
             <TouchableOpacity
               key={f.path}
               style={[d.folderRow, isActive && d.folderRowActive]}
-              onPress={() => onFolderSelect(f.path)}
+              onPress={() => reorderMode ? undefined : onFolderSelect(f.path)}
+              disabled={reorderMode}
             >
               <View style={[d.folderIconWrap, { backgroundColor: isActive ? color.icon : color.bg }]}>
                 <Ionicons name={f.icon} size={16} color={isActive ? '#fff' : color.icon} />
@@ -581,7 +772,24 @@ function DrawerContent({
               <Text style={[d.folderLabel, isActive && d.folderLabelActive]} numberOfLines={1}>
                 {f.label}
               </Text>
-              {unread > 0 && (
+              {reorderMode ? (
+                <View style={{ flexDirection: 'row', gap: 4 }}>
+                  <TouchableOpacity
+                    style={d.reorderBtn}
+                    disabled={index === 0}
+                    onPress={() => moveFolder(f.path, -1, currentOrder)}
+                  >
+                    <Ionicons name="chevron-up" size={16} color={index === 0 ? '#D1D1D6' : '#8E8E93'} />
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={d.reorderBtn}
+                    disabled={index === displayFolders.length - 1}
+                    onPress={() => moveFolder(f.path, 1, currentOrder)}
+                  >
+                    <Ionicons name="chevron-down" size={16} color={index === displayFolders.length - 1 ? '#D1D1D6' : '#8E8E93'} />
+                  </TouchableOpacity>
+                </View>
+              ) : unread > 0 && (
                 <View style={[d.badge, isActive && d.badgeActive]}>
                   <Text style={[d.badgeText, isActive && d.badgeTextActive]}>{unread > 999 ? '999+' : unread}</Text>
                 </View>
@@ -669,6 +877,12 @@ const s = StyleSheet.create({
   sep: { height: 0.5, backgroundColor: '#F0F0F0', marginLeft: 26 },
   errorBanner: { backgroundColor: '#FF3B30', padding: 8, paddingHorizontal: 16 },
   errorText: { color: '#fff', fontSize: 13 },
+  smartSearchBanner: {
+    flexDirection: 'row', alignItems: 'flex-start',
+    backgroundColor: '#F5F0FF', marginHorizontal: 16, marginBottom: 8,
+    padding: 10, borderRadius: 10,
+  },
+  smartSearchText: { flex: 1, fontSize: 13, color: '#3C3C43', lineHeight: 18 },
   empty: { flex: 1, justifyContent: 'center', alignItems: 'center', gap: 12, paddingHorizontal: 32 },
   emptyTitle: { fontSize: 16, fontWeight: '600', color: '#3C3C43', textAlign: 'center' },
   addBtn: { backgroundColor: '#007AFF', paddingHorizontal: 24, paddingVertical: 12, borderRadius: 10, marginTop: 4 },
@@ -749,6 +963,7 @@ const d = StyleSheet.create({
     paddingRight: 4,
   },
   syncBtn: { padding: 8, marginLeft: 'auto' as any },
+  reorderBtn: { padding: 4 },
   // フォルダ行
   folderRow: {
     flexDirection: 'row', alignItems: 'center',

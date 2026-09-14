@@ -87,12 +87,19 @@ Deno.serve(async (_req) => {
         continue;
       }
 
-      const { emails, maxUid } = await res.json() as { emails: Array<{ from: { name: string; address: string }; subject: string }>; maxUid: number };
+      const { emails, maxUid } = await res.json() as { emails: Array<{ from: { name: string; address: string }; subject: string; isRead?: boolean }>; maxUid: number };
 
-      if (emails.length > 0 && maxUid > reg.last_uid) {
-        const latest = emails[0];
+      // 自分が送信したメール（IMAPのスレッドラベル付与等でINBOXに現れることがある）や
+      // 既読済みメール（他クライアントで既読化済み）は新着通知の対象にしない
+      const selfAddress = reg.account_email?.toLowerCase();
+      const newMail = emails.filter((e) =>
+        !e.isRead && (e.from?.address ?? '').toLowerCase() !== selfAddress,
+      );
+
+      if (newMail.length > 0 && maxUid > reg.last_uid) {
+        const latest = newMail[0];
         const fromName = latest.from?.name || latest.from?.address || '';
-        await sendExpoPush(reg.device_token, emails.length, fromName, latest.subject ?? '');
+        await sendExpoPush(reg.device_token, newMail.length, fromName, latest.subject ?? '');
         notified++;
       }
 

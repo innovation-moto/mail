@@ -10,7 +10,7 @@ import { useAccountStore } from '../store/accountStore';
 import { useMailStore } from '../store/mailStore';
 import { mailApi } from '../lib/api';
 import {
-  listFilterRules, deleteFilterRule,
+  listFilterRules, deleteFilterRule, generateFilterRulesFromFolders,
   listSignatures, createSignature, updateSignature, deleteSignature,
   listBlockList, addToBlockList, removeFromBlockList,
 } from '../lib/db';
@@ -273,6 +273,7 @@ function FiltersTab() {
   const [rules, setRules] = useState<FilterRule[]>([]);
   const [showForm, setShowForm] = useState(false);
   const [applying, setApplying] = useState(false);
+  const [generating, setGenerating] = useState(false);
 
   useEffect(() => {
     if (selectedAccountId) listFilterRules(selectedAccountId).then(setRules);
@@ -301,6 +302,22 @@ function FiltersTab() {
     }
   }
 
+  async function handleGenerateFromFolders() {
+    if (!selectedAccountId) return;
+    setGenerating(true);
+    try {
+      const created = await generateFilterRulesFromFolders(selectedAccountId);
+      const updated = await listFilterRules(selectedAccountId);
+      setRules(updated);
+      if (created > 0) pushRulesToImap(updated);
+      Alert.alert('完了', created > 0 ? `${created}件のフィルターをフォルダから生成しました。` : '生成できる新しいフォルダはありませんでした。');
+    } catch {
+      Alert.alert('エラー', 'フィルターの生成に失敗しました');
+    } finally {
+      setGenerating(false);
+    }
+  }
+
   async function handleDelete(id: string, name: string) {
     Alert.alert('フィルターを削除', `「${name || 'このルール'}」を削除しますか？`, [
       { text: 'キャンセル', style: 'cancel' },
@@ -321,6 +338,16 @@ function FiltersTab() {
       <View style={s.sectionHeader}>
         <Text style={s.sectionLabel}>フィルタールール</Text>
         <View style={{ flexDirection: 'row', gap: 8 }}>
+          <TouchableOpacity
+            style={[s.addRowBtn, { paddingHorizontal: 10, flexDirection: 'row', alignItems: 'center', gap: 4 }]}
+            onPress={handleGenerateFromFolders}
+            disabled={generating}
+          >
+            {generating
+              ? <ActivityIndicator size="small" color="#007AFF" />
+              : <><Ionicons name="folder-open-outline" size={15} color="#007AFF" /><Text style={{ color: '#007AFF', fontSize: 13 }}>フォルダから生成</Text></>
+            }
+          </TouchableOpacity>
           <TouchableOpacity
             style={[s.addRowBtn, { paddingHorizontal: 10, flexDirection: 'row', alignItems: 'center', gap: 4 }]}
             onPress={handleReapply}
@@ -577,7 +604,7 @@ function AiTab() {
           <Text style={s.aiActiveText}>AI機能が有効です</Text>
         </View>
       )}
-      <Text style={s.sectionNote} style={{ paddingHorizontal: 16, paddingTop: 8 }}>
+      <Text style={[s.sectionNote, { paddingHorizontal: 16, paddingTop: 8 }]}>
         APIキーはデバイス内のセキュアストレージに保存されます。
       </Text>
     </ScrollView>

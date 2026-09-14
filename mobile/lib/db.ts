@@ -91,7 +91,30 @@ export async function initDb(): Promise<void> {
       active INTEGER NOT NULL DEFAULT 1,
       created_at INTEGER NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS app_settings (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
   `);
+}
+
+/** 端末ローカルの簡易設定（フォルダ並び順など）。アカウント跨ぎで共有しない場合はキーに accountId を含める。 */
+export async function getAppSetting(key: string): Promise<string | null> {
+  const database = getDb();
+  const row = await database.getFirstAsync<{ value: string }>(
+    'SELECT value FROM app_settings WHERE key = ?',
+    [key],
+  );
+  return row?.value ?? null;
+}
+
+export async function setAppSetting(key: string, value: string): Promise<void> {
+  const database = getDb();
+  await database.runAsync(
+    'INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value',
+    [key, value],
+  );
 }
 
 function rowToEmail(row: Record<string, unknown>): Email {
@@ -159,7 +182,7 @@ export async function upsertEmail(email: Email): Promise<void> {
     ON CONFLICT(id) DO UPDATE SET
       is_read = excluded.is_read,
       is_starred = excluded.is_starred,
-      is_deleted = excluded.is_deleted,
+      is_deleted = CASE WHEN is_deleted = 1 THEN 1 ELSE excluded.is_deleted END,
       body_text = CASE WHEN excluded.body_text != '' THEN excluded.body_text ELSE body_text END,
       body_html = CASE WHEN excluded.body_html != '' THEN excluded.body_html ELSE body_html END,
       synced_at = excluded.synced_at`,
@@ -197,16 +220,85 @@ export async function listEmails(
   folder: string,
   limit = 100,
   offset = 0,
+  includeDeleted = false,
 ): Promise<Email[]> {
   const database = getDb();
+  // ゴミ箱：is_deleted=1（ローカル削除済み）またはフォルダ一致（IMAP同期済み）を両方表示
+  const condition = includeDeleted
+    ? `account_id = ? AND (is_deleted = 1 OR folder = ?) AND subject NOT LIKE '__IM-MAIL-%'`
+    : `account_id = ? AND folder = ? AND is_deleted = 0 AND subject NOT LIKE '__IM-MAIL-%'`;
   const rows = await database.getAllAsync<Record<string, unknown>>(
     `SELECT * FROM emails
-     WHERE account_id = ? AND folder = ? AND is_deleted = 0
+     WHERE ${condition}
      ORDER BY date DESC
      LIMIT ? OFFSET ?`,
     [accountId, folder, limit, offset],
   );
   return rows.map(rowToEmail);
+}
+
+/**
+ * 過去の送受信履歴（from / to / cc）からメールアドレス候補を集計する。
+ * 利用頻度の高い相手を上位に、前方一致を部分一致より優先。
+ */
+export async function getContactSuggestions(
+  accountId: string,
+  query: string,
+  limit = 8,
+): Promise<EmailAddress[]> {
+  const database = getDb();
+  const q = query.trim().toLowerCase();
+
+  const map = new Map<string, { name: string; count: number; last: number }>();
+  const add = (address: string | null | undefined, name: string | null | undefined, dateMs: number) => {
+    if (!address) return;
+    const addr = address.trim().toLowerCase();
+    if (!addr || !addr.includes('@')) return;
+    const nm = (name ?? '').trim();
+    const existing = map.get(addr);
+    if (existing) {
+      existing.count += 1;
+      if (dateMs > existing.last) existing.last = dateMs;
+      if (!existing.name && nm) existing.name = nm;
+    } else {
+      map.set(addr, { name: nm, count: 1, last: dateMs });
+    }
+  };
+
+  const rows = await database.getAllAsync<Record<string, unknown>>(
+    `SELECT from_address, from_name, to_addresses, cc_addresses, date
+     FROM emails
+     WHERE account_id = ?
+     ORDER BY date DESC
+     LIMIT 3000`,
+    [accountId],
+  );
+
+  for (const r of rows) {
+    const d = Number(r.date) || 0;
+    add(r.from_address as string, r.from_name as string, d);
+    try {
+      for (const a of JSON.parse((r.to_addresses as string) ?? '[]') as EmailAddress[]) add(a.address, a.name, d);
+      for (const a of JSON.parse((r.cc_addresses as string) ?? '[]') as EmailAddress[]) add(a.address, a.name, d);
+    } catch { /* JSON崩れは無視 */ }
+  }
+
+  let entries = Array.from(map.entries()).map(([address, v]) => ({ address, name: v.name, count: v.count, last: v.last }));
+
+  if (q) {
+    entries = entries.filter((e) => e.address.includes(q) || e.name.toLowerCase().includes(q));
+    entries.sort((a, b) => {
+      const aPre = a.address.startsWith(q) || a.name.toLowerCase().startsWith(q) ? 0 : 1;
+      const bPre = b.address.startsWith(q) || b.name.toLowerCase().startsWith(q) ? 0 : 1;
+      if (aPre !== bPre) return aPre - bPre;
+      if (b.count !== a.count) return b.count - a.count;
+      return b.last - a.last;
+    });
+  } else {
+    entries.sort((a, b) => (b.count !== a.count ? b.count - a.count : b.last - a.last));
+  }
+
+  return entries.slice(0, limit).map((e) => ({ name: e.name, address: e.address }));
 }
 
 export async function getEmail(id: string): Promise<Email | null> {
@@ -232,6 +324,14 @@ export async function markRead(id: string, isRead: boolean): Promise<void> {
        AND message_id = (SELECT message_id FROM emails WHERE id = ?)
        AND id != ?`,
     [isRead ? 1 : 0, id, id],
+  );
+}
+
+export async function markAllReadInFolder(accountId: string, folder: string): Promise<void> {
+  const database = getDb();
+  await database.runAsync(
+    'UPDATE emails SET is_read = 1 WHERE account_id = ? AND folder = ? AND is_read = 0 AND is_deleted = 0',
+    [accountId, folder],
   );
 }
 
@@ -350,8 +450,12 @@ export async function listThreads(
   folder: string,
   limit = 50,
   offset = 0,
+  includeDeleted = false,
 ): Promise<ThreadSummary[]> {
   const database = getDb();
+  const condition = includeDeleted
+    ? `e.account_id = ? AND (e.is_deleted = 1 OR e.folder = ?) AND e.subject NOT LIKE '__IM-MAIL-%'`
+    : `e.account_id = ? AND e.folder = ? AND e.is_deleted = 0 AND e.subject NOT LIKE '__IM-MAIL-%'`;
   const rows = await database.getAllAsync<any>(
     `SELECT
       COALESCE(e.thread_id, e.id) as thread_id,
@@ -367,15 +471,75 @@ export async function listThreads(
       (SELECT e2.id FROM emails e2
        WHERE COALESCE(e2.thread_id, e2.id) = COALESCE(e.thread_id, e.id)
          AND e2.account_id = e.account_id
-         AND e2.folder = e.folder
-         AND e2.is_deleted = 0
+         AND e2.is_deleted = e.is_deleted
        ORDER BY e2.date DESC LIMIT 1) as latest_email_id
      FROM emails e
-     WHERE e.account_id = ? AND e.folder = ? AND e.is_deleted = 0
+     WHERE ${condition}
      GROUP BY COALESCE(e.thread_id, e.id)
      ORDER BY MAX(e.date) DESC
      LIMIT ? OFFSET ?`,
     [accountId, folder, limit, offset],
+  );
+  return rows.map((r: any) => ({
+    threadId: r.thread_id,
+    subject: r.subject,
+    latestFrom: { name: r.from_name ?? '', address: r.from_address ?? '' },
+    latestDate: r.latest_date,
+    emailCount: r.email_count,
+    unreadCount: r.unread_count,
+    hasAttachments: r.has_attachments === 1,
+    latestEmailId: r.latest_email_id,
+    aiPriority: r.ai_priority,
+    folder: r.folder,
+  }));
+}
+
+// DB全文検索（件名・差出人・本文）。フォルダを問わず横断検索する。
+/** AIスマート検索用に、直近のメールを軽量な形で取得する */
+export async function getRecentEmailsForSearch(
+  accountId: string,
+  limit = 200,
+): Promise<Email[]> {
+  const database = getDb();
+  const rows = await database.getAllAsync<Record<string, unknown>>(
+    `SELECT * FROM emails WHERE account_id = ? AND is_deleted = 0 AND subject NOT LIKE '__IM-MAIL-%'
+     ORDER BY date DESC LIMIT ?`,
+    [accountId, limit],
+  );
+  return rows.map(rowToEmail);
+}
+
+export async function searchThreads(
+  accountId: string,
+  query: string,
+  limit = 100,
+): Promise<ThreadSummary[]> {
+  const database = getDb();
+  const q = `%${query}%`;
+  const rows = await database.getAllAsync<any>(
+    `SELECT
+      COALESCE(e.thread_id, e.id) as thread_id,
+      e.subject,
+      e.from_name,
+      e.from_address,
+      MAX(e.date) as latest_date,
+      COUNT(*) as email_count,
+      SUM(CASE WHEN e.is_read = 0 THEN 1 ELSE 0 END) as unread_count,
+      MAX(e.has_attachments) as has_attachments,
+      e.ai_priority,
+      e.folder,
+      (SELECT e2.id FROM emails e2
+       WHERE COALESCE(e2.thread_id, e2.id) = COALESCE(e.thread_id, e.id)
+         AND e2.account_id = e.account_id
+         AND e2.is_deleted = e.is_deleted
+       ORDER BY e2.date DESC LIMIT 1) as latest_email_id
+     FROM emails e
+     WHERE e.account_id = ? AND e.is_deleted = 0 AND e.subject NOT LIKE '__IM-MAIL-%'
+       AND (e.subject LIKE ? OR e.from_address LIKE ? OR e.from_name LIKE ? OR e.body_text LIKE ?)
+     GROUP BY COALESCE(e.thread_id, e.id)
+     ORDER BY MAX(e.date) DESC
+     LIMIT ?`,
+    [accountId, q, q, q, q, limit],
   );
   return rows.map((r: any) => ({
     threadId: r.thread_id,
@@ -414,6 +578,15 @@ export async function getMaxUid(accountId: string, folder: string): Promise<numb
     [accountId, folder],
   );
   return row?.max_uid ?? 0;
+}
+
+export async function getMinUidForFolder(accountId: string, folder: string): Promise<number> {
+  const database = getDb();
+  const row = await database.getFirstAsync<{ min_uid: number | null }>(
+    'SELECT MIN(uid) as min_uid FROM emails WHERE account_id = ? AND folder = ?',
+    [accountId, folder],
+  );
+  return row?.min_uid ?? 0;
 }
 
 export async function getEmailCountForFolder(accountId: string, folder: string): Promise<number> {
@@ -480,6 +653,73 @@ export async function createFilterRule(
 export async function deleteFilterRule(id: string): Promise<void> {
   const database = getDb();
   await database.runAsync('DELETE FROM filter_rules WHERE id = ?', [id]);
+}
+
+// システムフォルダ（振り分け対象外）判定（デスクトップ版と同じパターン）
+const SYSTEM_FOLDER_RE = [
+  /^inbox$/i, /(^|\/)sent/i, /送信済み/i, /(^|\/)draft/i, /下書き/i,
+  /(^|\/)trash/i, /ゴミ箱/i, /deleted/i, /(^|\/)spam/i, /junk/i, /迷惑/i,
+  /starred/i, /スター/i, /flagged/i, /すべてのメール/i, /all\s*mail/i,
+  /(^|\/)important/i, /重要/i, /im-mail-config/i, /^\[gmail\]$/i,
+];
+
+function isSystemFolder(folder: string): boolean {
+  return SYSTEM_FOLDER_RE.some((re) => re.test(folder));
+}
+
+/**
+ * 既存の各カスタムフォルダ（Gmailラベル等でサーバ側振り分け済みを含む）から、
+ * そのフォルダに入っているメールの送信者を推測してフィルタールールを自動生成する。
+ * 既にそのフォルダを振り分け先とするルールがある場合はスキップ（重複作成しない）。
+ * 生成したルール件数を返す（IMAPへのpushは呼び出し側で行う）。
+ */
+export async function generateFilterRulesFromFolders(accountId: string): Promise<number> {
+  const database = getDb();
+
+  const folderRows = await database.getAllAsync<{ folder: string }>(
+    'SELECT DISTINCT folder FROM emails WHERE account_id = ? AND is_deleted = 0',
+    [accountId],
+  );
+
+  const existingRows = await database.getAllAsync<{ action_folder: string }>(
+    'SELECT DISTINCT action_folder FROM filter_rules WHERE account_id = ? AND action_folder IS NOT NULL',
+    [accountId],
+  );
+  const existing = new Set(existingRows.map(r => r.action_folder));
+
+  let created = 0;
+  for (const { folder } of folderRows) {
+    if (isSystemFolder(folder)) continue;
+    if (existing.has(folder)) continue;
+
+    const senders = await database.getAllAsync<{ addr: string; c: number }>(
+      `SELECT from_address AS addr, COUNT(*) AS c
+       FROM emails
+       WHERE account_id = ? AND folder = ? AND is_deleted = 0 AND from_address != ''
+       GROUP BY lower(from_address)
+       ORDER BY c DESC
+       LIMIT 8`,
+      [accountId, folder],
+    );
+    if (senders.length === 0) continue;
+
+    const conditions: FilterCondition[] = senders.map(s => ({
+      field: 'from', operator: 'contains', value: s.addr,
+    }));
+
+    await createFilterRule(accountId, {
+      name: folder,
+      conditions,
+      conditionType: 'any',
+      actionFolder: folder,
+      actionMarkRead: false,
+      actionStarred: false,
+      active: true,
+    });
+    created++;
+  }
+
+  return created;
 }
 
 /** フィルタールールをメールに適用（syncEmails 後に呼ぶ） */

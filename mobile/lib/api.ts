@@ -2,7 +2,7 @@ import type { Account, AiSummarizeResult, AiTone, CalendarEvent, ComposeData, Em
 
 const BASE_URL = (process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:3000').replace(/\/$/, '');
 
-type AccountWithPassword = Omit<Account, 'id' | 'createdAt'> & { password: string };
+type AccountWithPassword = Omit<Account, 'id' | 'createdAt'> & { password: string; oauthAccessToken?: string };
 
 function buildAccountPayload(account: Account, password: string): AccountWithPassword {
   return {
@@ -16,6 +16,7 @@ function buildAccountPayload(account: Account, password: string): AccountWithPas
     smtpHost: account.smtpHost,
     smtpPort: account.smtpPort,
     smtpSecure: account.smtpSecure,
+    oauthAccessToken: account.oauthAccessToken,
   };
 }
 
@@ -115,6 +116,24 @@ export const mailApi = {
   },
 
   /**
+   * 過去メールのバックフィル（ローカルDBが尽きたフォルダで、既知の最小UIDより古いメールを取得）
+   */
+  backfillOlderEmails(
+    account: Account,
+    password: string,
+    folder: string,
+    minUid: number,
+    limit = 50,
+  ): Promise<{ emails: Email[] }> {
+    return post<{ emails: Email[] }>('/api/v1/mail/backfill', {
+      account: buildAccountPayload(account, password),
+      folder,
+      minUid,
+      limit,
+    }, { maxRetries: 1 });
+  },
+
+  /**
    * フラグのみ軽量取得（本文なし）— 既読・スター・削除検出用
    */
   syncFlags(
@@ -138,7 +157,7 @@ export const mailApi = {
     password: string,
     folder: string,
     uid: number,
-    action: 'markRead' | 'markUnread' | 'star' | 'unstar' | 'delete' | 'move',
+    action: 'markRead' | 'markUnread' | 'star' | 'unstar' | 'delete' | 'move' | 'spam',
     targetFolder?: string,
   ): Promise<{ ok: boolean }> {
     return post<{ ok: boolean }>('/api/v1/mail/action', {
@@ -148,6 +167,36 @@ export const mailApi = {
       action,
       targetFolder,
     }, { maxRetries: 1 });
+  },
+
+  /**
+   * フォルダ内の全メールを既読にする（IMAP一括操作）
+   */
+  markAllRead(
+    account: Account,
+    password: string,
+    folder: string,
+  ): Promise<{ ok: boolean }> {
+    return post<{ ok: boolean }>('/api/v1/mail/mark-all-read', {
+      account: buildAccountPayload(account, password),
+      folder,
+    }, { maxRetries: 1 });
+  },
+
+  /**
+   * 添付ファイル一覧をIMAPから取得（base64コンテンツ込み）
+   */
+  fetchAttachments(
+    account: Account,
+    password: string,
+    folder: string,
+    uid: number,
+  ): Promise<{ attachments: Array<{ filename: string; contentType: string; size: number; content: string }> }> {
+    return post<{ attachments: Array<{ filename: string; contentType: string; size: number; content: string }> }>(
+      '/api/v1/mail/attachments',
+      { account: buildAccountPayload(account, password), folder, uid },
+      { maxRetries: 1 },
+    );
   },
 
   /**
@@ -209,6 +258,14 @@ export const mailApi = {
     tone: AiTone,
   ): Promise<{ reply: string }> {
     return post<{ reply: string }>('/api/v1/ai/reply', { apiKey, subject, bodyText, tone });
+  },
+
+  aiSmartSearch(
+    apiKey: string,
+    query: string,
+    emails: Array<{ id: string; from: { name: string; address: string }; subject: string; date: number; bodyText: string }>,
+  ): Promise<{ answer: string; ids: string[] }> {
+    return post<{ answer: string; ids: string[] }>('/api/v1/ai/smart-search', { apiKey, query, emails });
   },
 
   aiDetectEvent(

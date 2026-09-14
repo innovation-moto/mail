@@ -10,7 +10,9 @@ import {
   markRead,
   markStar,
   markDeleted,
+  markAllReadInFolder,
   getMaxUid,
+  getMinUidForFolder,
   getEmailCountForFolder,
   getUnreadCountsByFolder,
   getTotalUnreadDistinct,
@@ -64,6 +66,9 @@ interface MailStore {
   syncing: boolean;
   foldersLoading: boolean;
   error: string | null;
+  hasMoreThreads: boolean;
+  loadingMoreThreads: boolean;
+  backfillingOlderEmails: boolean;
 
   setFolder(folder: string): void;
   selectEmail(id: string | null): void;
@@ -72,6 +77,7 @@ interface MailStore {
   loadFolders(accountId: string): Promise<void>;
   loadEmails(accountId: string, folder: string): Promise<void>;
   loadThreads(accountId: string, folder: string): Promise<void>;
+  loadMoreThreads(accountId: string): Promise<void>;
   selectThread(accountId: string, threadId: string, folder: string): Promise<void>;
   syncEmails(accountId: string, folder: string): Promise<void>;
   syncAllFolders(accountId: string): Promise<void>;
@@ -79,10 +85,12 @@ interface MailStore {
 
   reapplyFiltersNow(accountId: string): Promise<number>;
   markRead(id: string, uid: number, folder: string): Promise<void>;
+  markAllRead(accountId: string, folder: string): Promise<void>;
   starEmail(id: string, uid: number, folder: string, isStarred: boolean): Promise<void>;
   deleteEmail(id: string, uid: number, folder: string): Promise<void>;
   deleteThread(accountId: string, threadId: string, folder: string): Promise<void>;
   moveThread(accountId: string, threadId: string, folder: string, targetFolder: string): Promise<void>;
+  spamThread(accountId: string, threadId: string, folder: string): Promise<void>;
 }
 
 // ゴミ箱フォルダ判定（specialUse または パスパターン）
@@ -113,9 +121,12 @@ export const useMailStore = create<MailStore>((set, get) => ({
   syncing: false,
   foldersLoading: false,
   error: null,
+  hasMoreThreads: true,
+  loadingMoreThreads: false,
+  backfillingOlderEmails: false,
 
   setFolder(folder: string) {
-    set({ selectedFolder: folder, selectedEmailId: null, emails: [], threads: [] });
+    set({ selectedFolder: folder, selectedEmailId: null, emails: [], threads: [], hasMoreThreads: true });
   },
 
   selectEmail(id: string | null) {
@@ -384,11 +395,67 @@ export const useMailStore = create<MailStore>((set, get) => ({
     try {
       const trash = isTrashFolder(folder, get().folders);
       const threads = await listThreads(accountId, folder, 50, 0, trash);
-      set({ threads });
+      set({ threads, hasMoreThreads: threads.length === 50 });
     } catch (err) {
       if (!isTransientError(err)) set({ error: (err as Error).message });
     } finally {
       set({ loading: false });
+    }
+  },
+
+  async loadMoreThreads(accountId: string) {
+    const { threads, selectedFolder, loadingMoreThreads, hasMoreThreads, backfillingOlderEmails, folders } = get();
+    if (loadingMoreThreads || backfillingOlderEmails) return;
+
+    const trash = isTrashFolder(selectedFolder, folders);
+
+    if (hasMoreThreads) {
+      // まずローカルDBから追加取得
+      set({ loadingMoreThreads: true });
+      try {
+        const more = await listThreads(accountId, selectedFolder, 50, threads.length, trash);
+        const seen = new Set(threads.map((t) => t.threadId));
+        const fresh = more.filter((t) => !seen.has(t.threadId));
+        set({
+          threads: [...threads, ...fresh],
+          loadingMoreThreads: false,
+          hasMoreThreads: more.length === 50 && fresh.length > 0,
+        });
+      } catch {
+        set({ loadingMoreThreads: false });
+      }
+      return;
+    }
+
+    // DBが尽きた → IMAPから古いメールをバックフィル（仮想フォルダは対象外）
+    const VIRTUAL = new Set(['Starred', 'Pinned']);
+    if (VIRTUAL.has(selectedFolder) || trash) return;
+
+    const accountStore = useAccountStore.getState();
+    const account = accountStore.accounts.find((a) => a.id === accountId);
+    if (!account) return;
+    const password = await accountStore.getPassword(accountId);
+    if (!password) return;
+
+    set({ backfillingOlderEmails: true });
+    try {
+      const minUid = await getMinUidForFolder(accountId, selectedFolder);
+      if (minUid <= 1) return; // これ以上古いものはない
+      const { emails } = await mailApi.backfillOlderEmails(account, password, selectedFolder, minUid, 50);
+      for (const email of emails) {
+        await upsertEmail({ ...email, accountId });
+      }
+      if (emails.length > 0) {
+        const more = await listThreads(accountId, selectedFolder, 50, threads.length, trash);
+        const seen = new Set(threads.map((t) => t.threadId));
+        const fresh = more.filter((t) => !seen.has(t.threadId));
+        set({ threads: [...threads, ...fresh], hasMoreThreads: more.length === 50 && fresh.length > 0 });
+      }
+      // emails.length === 0 ならサーバーにも古いメールがないので終端（hasMoreThreadsはfalseのまま）
+    } catch {
+      // バックフィル失敗は無視（ネットワーク不達等）
+    } finally {
+      set({ backfillingOlderEmails: false });
     }
   },
 
@@ -590,6 +657,34 @@ export const useMailStore = create<MailStore>((set, get) => ({
     }
   },
 
+  async markAllRead(accountId: string, folder: string) {
+    // Optimistic update
+    set((state) => ({
+      emails: state.emails.map((e) => (e.folder === folder ? { ...e, isRead: true } : e)),
+      threads: state.threads.map((t) => (t.folder === folder ? { ...t, unreadCount: 0 } : t)),
+      folderUnreadCounts: { ...state.folderUnreadCounts, [folder]: 0 },
+      imapInboxCount: folder === 'INBOX' ? 0 : state.imapInboxCount,
+    }));
+
+    await markAllReadInFolder(accountId, folder);
+
+    const accountStore = useAccountStore.getState();
+    const account = accountStore.accounts.find((a) => a.id === accountId);
+    const password = account ? await accountStore.getPassword(accountId) : null;
+    if (account && password) {
+      mailApi.markAllRead(account, password, folder).catch(() => {});
+    }
+
+    // DBから正確な値で再同期
+    const counts = await getUnreadCountsByFolder(accountId);
+    set((s) => ({ folderUnreadCounts: mergeUnreadCounts(s.imapInboxCount, counts) }));
+    try {
+      const { setBadgeCount } = await import('../lib/notifications');
+      const totalUnread = await getTotalUnreadDistinct(accountId);
+      await setBadgeCount(totalUnread);
+    } catch {}
+  },
+
   async starEmail(id: string, uid: number, folder: string, isStarred: boolean) {
     const accountStore = useAccountStore.getState();
     const account = accountStore.getSelectedAccount();
@@ -726,6 +821,40 @@ export const useMailStore = create<MailStore>((set, get) => ({
     for (const email of threadEmails) {
       if (password) {
         mailApi.action(account, password, email.folder || folder, email.uid, 'move', targetFolder).catch(() => {});
+      }
+    }
+  },
+
+  async spamThread(accountId: string, threadId: string, folder: string) {
+    const accountStore = useAccountStore.getState();
+    const accounts = accountStore.accounts;
+    const account = accounts.find(a => a.id === accountId);
+    if (!account) return;
+
+    // 迷惑メールフォルダを判定（specialUse優先、なければパスパターン、最後はGmail既定値）
+    const spamFolder = get().folders.find(f => f.specialUse === '\\Junk')
+      ?? get().folders.find(f => {
+        const p = f.path.toLowerCase();
+        return p.includes('spam') || p.includes('junk') || f.path.includes('迷惑');
+      });
+    const targetFolder = spamFolder?.path ?? '[Gmail]/Spam';
+
+    const stateEmails = get().emails.filter(
+      e => (e.threadId || e.id) === threadId,
+    );
+    const threadEmails = stateEmails.length > 0
+      ? stateEmails
+      : await getThreadEmails(accountId, threadId, folder);
+
+    set((state) => ({
+      emails: state.emails.filter((e) => (e.threadId || e.id) !== threadId),
+      threads: state.threads.filter((t) => t.threadId !== threadId),
+    }));
+
+    const password = await accountStore.getPassword(accountId);
+    for (const email of threadEmails) {
+      if (password) {
+        mailApi.action(account, password, email.folder || folder, email.uid, 'spam', targetFolder).catch(() => {});
       }
     }
   },

@@ -13,11 +13,106 @@ import * as DocumentPicker from 'expo-document-picker';
 import { useAccountStore } from '../store/accountStore';
 import { useMailStore } from '../store/mailStore';
 import { mailApi } from '../lib/api';
-import { getEmail, listSignatures } from '../lib/db';
-import type { Email } from '@/shared/types';
+import { getEmail, listSignatures, getContactSuggestions } from '../lib/db';
+import type { Email, EmailAddress, Signature } from '@/shared/types';
+
+const SIGNATURE_PREFIX = '\n\n--\n';
+
+function buildBodyWithSignature(base: string, sig: Signature | null): string {
+  const idx = base.lastIndexOf(SIGNATURE_PREFIX);
+  const stripped = idx === -1 ? base : base.slice(0, idx);
+  return sig ? `${stripped}${SIGNATURE_PREFIX}${sig.content}` : stripped;
+}
 
 type Mode = 'new' | 'reply' | 'replyAll' | 'forward';
 type Attachment = { filename: string; content: string; contentType: string; size: number };
+
+const lastToken = (v: string) => {
+  const idx = v.lastIndexOf(',');
+  return (idx === -1 ? v : v.slice(idx + 1)).trim();
+};
+
+/**
+ * 宛先入力行（カンマ区切り）。最後のトークンを過去の送受信履歴から補完し、
+ * 入力欄の直下に候補リストを表示する。タップで確定。
+ */
+function RecipientField({
+  label, value, onChangeText, accountId, placeholder, inputRef, rightElement,
+}: {
+  label: string;
+  value: string;
+  onChangeText: (v: string) => void;
+  accountId: string | undefined;
+  placeholder?: string;
+  inputRef?: React.RefObject<TextInput | null>;
+  rightElement?: React.ReactNode;
+}) {
+  const [suggestions, setSuggestions] = useState<EmailAddress[]>([]);
+  const focusedRef = useRef(false);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const blurRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    const token = lastToken(value);
+    if (!accountId || !focusedRef.current || token.length < 1) {
+      setSuggestions([]);
+      return;
+    }
+    debounceRef.current = setTimeout(() => {
+      getContactSuggestions(accountId, token, 6).then((list) => {
+        const used = new Set(value.split(',').map((s) => s.trim().toLowerCase()).filter(Boolean));
+        setSuggestions(list.filter((c) => !used.has(c.address.toLowerCase())));
+      }).catch(() => {});
+    }, 150);
+    return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
+  }, [value, accountId]);
+
+  const apply = (c: EmailAddress) => {
+    if (blurRef.current) clearTimeout(blurRef.current);
+    const idx = value.lastIndexOf(',');
+    const prefix = idx === -1 ? '' : `${value.slice(0, idx + 1)} `;
+    onChangeText(`${prefix}${c.address}, `);
+    setSuggestions([]);
+  };
+
+  return (
+    <>
+      <View style={s.row}>
+        <Text style={s.label}>{label}</Text>
+        <TextInput
+          ref={inputRef}
+          style={s.input}
+          value={value}
+          onChangeText={onChangeText}
+          onFocus={() => { focusedRef.current = true; }}
+          onBlur={() => {
+            focusedRef.current = false;
+            // タップで候補を選ぶ猶予を残してからクリア
+            blurRef.current = setTimeout(() => setSuggestions([]), 200);
+          }}
+          placeholder={placeholder}
+          placeholderTextColor="#C7C7CC"
+          keyboardType="email-address"
+          autoCapitalize="none"
+          autoCorrect={false}
+          multiline
+        />
+        {rightElement}
+      </View>
+      {suggestions.length > 0 && (
+        <View style={s.suggestBox}>
+          {suggestions.map((c) => (
+            <TouchableOpacity key={c.address} style={s.suggestItem} onPress={() => apply(c)}>
+              {!!c.name && <Text style={s.suggestName} numberOfLines={1}>{c.name}</Text>}
+              <Text style={s.suggestAddr} numberOfLines={1}>{c.address}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      )}
+    </>
+  );
+}
 
 export default function ComposeScreen() {
   const { mode = 'new', emailId, aiBody } = useLocalSearchParams<{ mode?: Mode; emailId?: string; aiBody?: string }>();
@@ -34,6 +129,9 @@ export default function ComposeScreen() {
   const [sending, setSending] = useState(false);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [showAttachPicker, setShowAttachPicker] = useState(false);
+  const [signatures, setSignatures] = useState<Signature[]>([]);
+  const [selectedSignatureId, setSelectedSignatureId] = useState<string | null>(null);
+  const [showSignaturePicker, setShowSignaturePicker] = useState(false);
   const [recentPhotos, setRecentPhotos] = useState<MediaLibrary.Asset[]>([]);
   const [selectedPhotos, setSelectedPhotos] = useState<Set<string>>(new Set());
   const pendingAction = useRef<(() => void) | null>(null);
@@ -77,15 +175,15 @@ export default function ComposeScreen() {
     }
   }, [attachments.length]);
 
-  // デフォルト署名を本文にセット
+  // 署名一覧を読み込み、デフォルト署名を本文にセット
   useEffect(() => {
     (async () => {
       const sigs = await listSignatures(account?.id ?? undefined);
-      const def = sigs.find(s => s.isDefault) ?? sigs[0];
-      if (!def) return;
-      const sigText = '\n\n--\n' + def.content;
+      setSignatures(sigs);
+      const def = sigs.find(s => s.isDefault) ?? sigs[0] ?? null;
+      setSelectedSignatureId(def?.id ?? null);
       if (mode === 'new') {
-        setBody(sigText);
+        setBody(buildBodyWithSignature('', def));
       }
       // reply / replyAll / forward は buildQuote が body を設定するので
       // そちらの useEffect が走った後に追記する
@@ -98,24 +196,33 @@ export default function ComposeScreen() {
       const orig = await getEmail(emailId);
       if (!orig) return;
       const sigs = await listSignatures(account?.id ?? undefined);
-      const def = sigs.find(s => s.isDefault) ?? sigs[0];
-      const sigText = def ? '\n\n--\n' + def.content : '';
+      setSignatures(sigs);
+      const def = sigs.find(s => s.isDefault) ?? sigs[0] ?? null;
+      setSelectedSignatureId(def?.id ?? null);
       if (mode === 'reply') {
         setTo(orig.from.address);
         setSubject(`Re: ${orig.subject}`);
-        setBody((aiBody ? decodeURIComponent(aiBody) + '\n\n' + buildQuote(orig) : buildQuote(orig)) + sigText);
+        const base = aiBody ? decodeURIComponent(aiBody) + '\n\n' + buildQuote(orig) : buildQuote(orig);
+        setBody(buildBodyWithSignature(base, def));
       } else if (mode === 'replyAll') {
         const toAddrs = [orig.from.address, ...orig.to.map(t => t.address)].filter(a => a !== account?.email).join(', ');
         setTo(toAddrs);
         if (orig.cc?.length > 0) { setCc(orig.cc.map(c => c.address).join(', ')); setShowCcBcc(true); }
         setSubject(`Re: ${orig.subject}`);
-        setBody(buildQuote(orig) + sigText);
+        setBody(buildBodyWithSignature(buildQuote(orig), def));
       } else if (mode === 'forward') {
         setSubject(`Fwd: ${orig.subject}`);
-        setBody(buildQuote(orig, true) + sigText);
+        setBody(buildBodyWithSignature(buildQuote(orig, true), def));
       }
     })();
   }, [emailId, mode]);
+
+  function handleSignatureChange(sigId: string | null) {
+    const sig = sigId ? signatures.find(s => s.id === sigId) ?? null : null;
+    setSelectedSignatureId(sigId);
+    setBody(prev => buildBodyWithSignature(prev, sig));
+    setShowSignaturePicker(false);
+  }
 
   const buildQuote = (orig: Email, isForward = false): string => {
     const header = isForward
@@ -328,6 +435,15 @@ export default function ComposeScreen() {
 
       <View style={[s.toolbar, { position: 'absolute', bottom: keyboardH > 0 ? 8 : 18, right: 0, left: 0 }]}>
         <View style={s.glassCluster}>
+          {signatures.length > 0 && (
+            <TouchableOpacity onPress={() => setShowSignaturePicker(true)} style={s.glassBtn}>
+              <Ionicons
+                name="create-outline"
+                size={22}
+                color={selectedSignatureId ? '#007AFF' : '#3C3C43'}
+              />
+            </TouchableOpacity>
+          )}
           <TouchableOpacity onPress={handleAttach} style={s.glassBtn}>
             <Ionicons name="attach-outline" size={24} color="#3C3C43" />
           </TouchableOpacity>
@@ -422,6 +538,36 @@ export default function ComposeScreen() {
           </TouchableOpacity>
         </View>
       </Modal>
+
+      <Modal
+        visible={showSignaturePicker}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowSignaturePicker(false)}
+      >
+        <TouchableOpacity style={s.modalBackdrop} activeOpacity={1} onPress={() => setShowSignaturePicker(false)} />
+        <View style={[s.pickerSheet, { paddingBottom: insets.bottom + 8 }]}>
+          <View style={s.pickerHandle} />
+          <Text style={s.pickerSectionTitle}>署名</Text>
+          <View style={{ backgroundColor: '#fff' }}>
+            <TouchableOpacity style={s.sigRow} onPress={() => handleSignatureChange(null)}>
+              <Text style={[s.sigRowText, !selectedSignatureId && s.sigRowTextActive]}>署名なし</Text>
+              {!selectedSignatureId && <Ionicons name="checkmark" size={18} color="#007AFF" />}
+            </TouchableOpacity>
+            {signatures.map(sig => (
+              <TouchableOpacity key={sig.id} style={s.sigRow} onPress={() => handleSignatureChange(sig.id)}>
+                <Text style={[s.sigRowText, selectedSignatureId === sig.id && s.sigRowTextActive]} numberOfLines={1}>
+                  {sig.name}
+                </Text>
+                {selectedSignatureId === sig.id && <Ionicons name="checkmark" size={18} color="#007AFF" />}
+              </TouchableOpacity>
+            ))}
+          </View>
+          <TouchableOpacity style={s.pickerCancel} onPress={() => setShowSignaturePicker(false)}>
+            <Text style={s.pickerCancelText}>キャンセル</Text>
+          </TouchableOpacity>
+        </View>
+      </Modal>
     </SafeAreaView>
     </View>
   );
@@ -429,56 +575,26 @@ export default function ComposeScreen() {
   function renderFields() {
     return (
       <>
-        <View style={s.row}>
-          <Text style={s.label}>宛先</Text>
-          <TextInput
-            ref={toRef}
-            style={s.input}
-            value={to}
-            onChangeText={setTo}
-            placeholder="メールアドレス"
-            placeholderTextColor="#C7C7CC"
-            keyboardType="email-address"
-            autoCapitalize="none"
-            multiline
-          />
-          {!showCcBcc && (
+        <RecipientField
+          label="宛先"
+          value={to}
+          onChangeText={setTo}
+          accountId={account?.id}
+          placeholder="メールアドレス"
+          inputRef={toRef}
+          rightElement={!showCcBcc ? (
             <TouchableOpacity onPress={() => setShowCcBcc(true)} style={s.ccBccBtn}>
               <Text style={s.ccBccText}>Cc: Bcc:</Text>
             </TouchableOpacity>
-          )}
-        </View>
+          ) : undefined}
+        />
         <View style={s.sep} />
 
         {showCcBcc && (
           <>
-            <View style={s.row}>
-              <Text style={s.label}>Cc</Text>
-              <TextInput
-                style={s.input}
-                value={cc}
-                onChangeText={setCc}
-                placeholder=""
-                placeholderTextColor="#C7C7CC"
-                keyboardType="email-address"
-                autoCapitalize="none"
-                multiline
-              />
-            </View>
+            <RecipientField label="Cc" value={cc} onChangeText={setCc} accountId={account?.id} />
             <View style={s.sep} />
-            <View style={s.row}>
-              <Text style={s.label}>Bcc</Text>
-              <TextInput
-                style={s.input}
-                value={bcc}
-                onChangeText={setBcc}
-                placeholder=""
-                placeholderTextColor="#C7C7CC"
-                keyboardType="email-address"
-                autoCapitalize="none"
-                multiline
-              />
-            </View>
+            <RecipientField label="Bcc" value={bcc} onChangeText={setBcc} accountId={account?.id} />
             <View style={s.sep} />
           </>
         )}
@@ -531,6 +647,10 @@ const s = StyleSheet.create({
   ccBccBtn: { paddingLeft: 8, paddingTop: 2, borderWidth: 0.5, borderColor: '#C7C7CC', borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2 },
   ccBccText: { fontSize: 13, color: '#8E8E93' },
   sep: { height: 0.5, backgroundColor: '#E5E5EA' },
+  suggestBox: { backgroundColor: '#F9F9FB', borderBottomWidth: 0.5, borderBottomColor: '#E5E5EA' },
+  suggestItem: { paddingHorizontal: 16, paddingVertical: 9, borderTopWidth: 0.5, borderTopColor: '#E5E5EA' },
+  suggestName: { fontSize: 15, color: '#000' },
+  suggestAddr: { fontSize: 13, color: '#8E8E93', marginTop: 1 },
   body: { minHeight: 120, fontSize: 15, color: '#000', padding: 16, lineHeight: 22, textAlignVertical: 'top' },
   attachRow: {
     marginTop: 8,
@@ -615,4 +735,11 @@ const s = StyleSheet.create({
   pickerActionLabel: { fontSize: 12, color: '#3C3C43', fontWeight: '500' },
   pickerCancel: { backgroundColor: '#fff', marginTop: 8, paddingVertical: 16, alignItems: 'center' },
   pickerCancelText: { fontSize: 17, color: '#007AFF', fontWeight: '600' },
+  sigRow: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingHorizontal: 16, paddingVertical: 14,
+    borderBottomWidth: 0.5, borderBottomColor: '#F0F0F0',
+  },
+  sigRowText: { fontSize: 15, color: '#3C3C43', flex: 1, marginRight: 8 },
+  sigRowTextActive: { color: '#007AFF', fontWeight: '600' },
 });
