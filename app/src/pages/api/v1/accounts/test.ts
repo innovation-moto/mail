@@ -12,7 +12,9 @@ async function testImap(account: AccountConfig, password: string): Promise<{ ok:
     host: account.imapHost,
     port: account.imapPort,
     secure: account.imapSecure,
-    auth: { user: account.email, pass: password },
+    auth: account.oauthAccessToken
+      ? { user: account.email, accessToken: account.oauthAccessToken }
+      : { user: account.email, pass: password },
     logger: false,
     tls: { rejectUnauthorized: false },
     connectionTimeout: 15000,
@@ -33,7 +35,9 @@ async function testSmtp(account: AccountConfig, password: string): Promise<{ ok:
     host: account.smtpHost,
     port: account.smtpPort,
     secure: account.smtpSecure,
-    auth: { user: account.email, pass: password },
+    auth: account.oauthAccessToken
+      ? { type: 'OAuth2' as const, user: account.email, accessToken: account.oauthAccessToken }
+      : { user: account.email, pass: password },
     tls: { rejectUnauthorized: false },
   });
   try {

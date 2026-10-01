@@ -37,17 +37,19 @@ export default async function handler(
     return res.status(400).json({ error: 'account and uids are required' });
   }
 
-  const { password, ...accountConfig } = account;
+  const { password, oauthAccessToken, ...accountConfig } = account;
 
   const client = new ImapFlow({
     host: accountConfig.imapHost,
     port: accountConfig.imapPort,
     secure: accountConfig.imapSecure,
-    auth: { user: accountConfig.email, pass: password },
+    auth: oauthAccessToken
+      ? { user: accountConfig.email, accessToken: oauthAccessToken }
+      : { user: accountConfig.email, pass: password },
     logger: false,
     tls: { rejectUnauthorized: false },
-    connectionTimeout: 30000,
-    socketTimeout: 55000,
+    connectionTimeout: 15000,
+    socketTimeout: 20000,
   });
 
   let lock: MailboxLockObject | null = null;

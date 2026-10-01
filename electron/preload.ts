@@ -24,9 +24,18 @@ const api = {
     move: (emailId: string, folder: string) => ipcRenderer.invoke('mail:move', emailId, folder),
     search: (accountId: string, query: string) => ipcRenderer.invoke('mail:search', accountId, query),
     getUnreadCounts: (accountId: string) => ipcRenderer.invoke('mail:getUnreadCounts', accountId),
+    getThreadUnreadCounts: (accountId: string) => ipcRenderer.invoke('mail:getThreadUnreadCounts', accountId),
     fetchAttachments: (emailId: string) => ipcRenderer.invoke('mail:fetchAttachments', emailId),
     markSpam: (emailId: string) => ipcRenderer.invoke('mail:markSpam', emailId),
     downloadAttachment: (attachmentId: string) => ipcRenderer.invoke('mail:downloadAttachment', attachmentId),
+    fetchThreads: (accountId: string, folder: string, limit?: number, offset?: number) =>
+      ipcRenderer.invoke('mail:fetchThreads', accountId, folder, limit, offset),
+    backfillOlderEmails: (accountId: string, folder: string, limit?: number) =>
+      ipcRenderer.invoke('mail:backfillOlderEmails', accountId, folder, limit),
+    fetchThreadEmails: (accountId: string, threadId: string, folder: string) =>
+      ipcRenderer.invoke('mail:fetchThreadEmails', accountId, threadId, folder),
+    contactSuggestions: (accountId: string, query: string, limit?: number) =>
+      ipcRenderer.invoke('mail:contactSuggestions', accountId, query, limit),
   },
   ai: {
     generateReply: (emailId: string, tone: string) => ipcRenderer.invoke('ai:generateReply', emailId, tone),
@@ -55,6 +64,7 @@ const api = {
     create: (accountId: string, data: unknown) => ipcRenderer.invoke('filters:create', accountId, data),
     update: (id: string, data: unknown) => ipcRenderer.invoke('filters:update', id, data),
     delete: (id: string) => ipcRenderer.invoke('filters:delete', id),
+    generateFromFolders: (accountId: string) => ipcRenderer.invoke('filters:generateFromFolders', accountId),
   },
   folders: {
     create: (accountId: string, path: string) => ipcRenderer.invoke('folders:create', accountId, path),
@@ -66,6 +76,9 @@ const api = {
     create: (data: unknown) => ipcRenderer.invoke('signatures:create', data),
     update: (id: string, data: unknown) => ipcRenderer.invoke('signatures:update', id, data),
     delete: (id: string) => ipcRenderer.invoke('signatures:delete', id),
+  },
+  shell: {
+    openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url),
   },
   on: (channel: string, callback: (...args: unknown[]) => void) => {
     const handler = (_: unknown, ...args: unknown[]) => callback(...args);

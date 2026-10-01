@@ -97,6 +97,13 @@ export function listEmails(
         AND (folder LIKE '%Trash%' OR folder LIKE '%ゴミ箱%' OR folder LIKE '%Deleted%')
       ORDER BY date DESC LIMIT ? OFFSET ?
     `).all(accountId, limit, offset) as EmailRow[];
+  } else if (folder === 'Spam') {
+    rows = db.prepare(`
+      SELECT * FROM emails
+      WHERE account_id = ? AND is_deleted = 0
+        AND (folder LIKE '%Spam%' OR folder LIKE '%Junk%' OR folder LIKE '%迷惑%')
+      ORDER BY date DESC LIMIT ? OFFSET ?
+    `).all(accountId, limit, offset) as EmailRow[];
   } else {
     rows = db.prepare(`
       SELECT * FROM emails
@@ -625,6 +632,10 @@ export function listThreads(
     folderCondition = `e.account_id = ?
       AND (e.folder LIKE '%Trash%' OR e.folder LIKE '%ゴミ箱%' OR e.folder LIKE '%Deleted%')`;
     queryParams = [accountId, limit, offset];
+  } else if (folder === 'Spam') {
+    folderCondition = `e.account_id = ? AND e.is_deleted = 0
+      AND (e.folder LIKE '%Spam%' OR e.folder LIKE '%Junk%' OR e.folder LIKE '%迷惑%')`;
+    queryParams = [accountId, limit, offset];
   } else {
     folderCondition = 'e.account_id = ? AND e.folder = ? AND e.is_deleted = 0';
     queryParams = [accountId, folder, limit, offset];
@@ -705,6 +716,13 @@ export function getThreadEmails(accountId: string, threadId: string | null, fold
       SELECT * FROM emails
       WHERE account_id = ? AND (thread_id = ? OR id = ?)
         AND (folder LIKE '%Trash%' OR folder LIKE '%ゴミ箱%' OR folder LIKE '%Deleted%')
+      ORDER BY date DESC LIMIT 200
+    `).all(accountId, threadId, threadId) as EmailRow[];
+  } else if (folder === 'Spam') {
+    rows = db.prepare(`
+      SELECT * FROM emails
+      WHERE account_id = ? AND (thread_id = ? OR id = ?) AND is_deleted = 0
+        AND (folder LIKE '%Spam%' OR folder LIKE '%Junk%' OR folder LIKE '%迷惑%')
       ORDER BY date DESC LIMIT 200
     `).all(accountId, threadId, threadId) as EmailRow[];
   } else {

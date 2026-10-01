@@ -8,6 +8,7 @@ import type {
   FilterRule,
   Signature,
   ThreadSummary,
+  EmailAddress,
 } from '@/types/shared';
 
 export const isElectron = typeof window !== 'undefined' && 'electronAPI' in window;
@@ -116,6 +117,12 @@ export const api = {
     getThreadUnreadCounts: (accountId: string): Promise<Record<string, number>> => isElectron
       ? getAPI().mail.getThreadUnreadCounts(accountId)
       : webFetch(`/api/mail/threadUnreadCounts?accountId=${accountId}`),
+    backfillOlderEmails: (accountId: string, folder: string, limit = 50): Promise<number> => isElectron
+      ? getAPI().mail.backfillOlderEmails(accountId, folder, limit)
+      : Promise.resolve(0),
+    contactSuggestions: (accountId: string, query: string, limit = 8): Promise<EmailAddress[]> => isElectron
+      ? getAPI().mail.contactSuggestions(accountId, query, limit)
+      : Promise.resolve([]),
   },
   ai: {
     generateReply: (emailId: string, tone: AiTone) => isElectron
@@ -181,6 +188,9 @@ export const api = {
     delete: (id: string) => isElectron
       ? getAPI().filters.delete(id)
       : Promise.resolve(null),
+    generateFromFolders: (accountId: string) => isElectron
+      ? getAPI().filters.generateFromFolders(accountId)
+      : Promise.resolve({ created: 0, filters: [] }),
   },
   folders: {
     create: (accountId: string, path: string) => isElectron

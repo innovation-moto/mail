@@ -29,38 +29,32 @@ export default async function handler(
     return res.status(400).json({ error: 'account is required' });
   }
 
-  const { password, ...accountConfig } = account;
+  const { password, oauthAccessToken, ...accountConfig } = account;
 
   const client = new ImapFlow({
     host: accountConfig.imapHost,
     port: accountConfig.imapPort,
     secure: accountConfig.imapSecure,
-    auth: { user: accountConfig.email, pass: password },
+    auth: oauthAccessToken
+      ? { user: accountConfig.email, accessToken: oauthAccessToken }
+      : { user: accountConfig.email, pass: password },
     logger: false,
     tls: { rejectUnauthorized: false },
-    connectionTimeout: 30000,
-    socketTimeout: 55000,
+    connectionTimeout: 15000,
+    socketTimeout: 20000,
   });
 
   try {
     await client.connect();
     const list = await client.list();
-    // INBOXの未読数をSTATUSコマンドで取得
-    let inboxUnread = 0;
-    try {
-      const status = await client.status('INBOX', { unseen: true });
-      console.log('[folders] STATUS result:', JSON.stringify(status));
-      inboxUnread = status.unseen ?? 0;
-    } catch (statusErr) {
-      console.error('[folders] STATUS error:', statusErr);
-    }
+    // 未読数はローカルDBから取得するため、ここでは 0 を返す
     const folders: Folder[] = list.map((f) => ({
       path: f.path,
       name: f.name,
       delimiter: f.delimiter ?? '/',
       flags: Array.from(f.flags ?? []),
       specialUse: (f as any).specialUse ?? null,
-      unreadCount: f.path === 'INBOX' ? inboxUnread : 0,
+      unreadCount: 0,
     }));
     return res.status(200).json(folders);
   } catch (err) {

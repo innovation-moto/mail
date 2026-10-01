@@ -46,6 +46,7 @@ export interface AccountConfig {
   smtpHost: string;
   smtpPort: number;
   smtpSecure: boolean;
+  oauthAccessToken?: string;
 }
 
 export interface EmailAddress {
@@ -70,6 +71,7 @@ export interface Email {
   from: EmailAddress;
   to: EmailAddress[];
   cc: EmailAddress[];
+  replyToAddress?: string;
   subject: string;
   bodyText: string;
   bodyHtml: string;

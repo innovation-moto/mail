@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   Inbox, Send, FileText, Trash2, Star, Folder, ChevronDown,
-  Plus, Settings, RefreshCw, PanelLeftClose, PanelLeft, GripVertical, X,
+  Plus, Settings, RefreshCw, PanelLeftClose, PanelLeft, GripVertical, X, ShieldAlert,
 } from 'lucide-react';
 import { useAccountStore } from '@/store/accountStore';
 import { useMailStore } from '@/store/mailStore';
@@ -10,11 +10,12 @@ import { useUIStore } from '@/store/uiStore';
 import { cn, getInitials, getAvatarColor } from '@/lib/utils';
 
 const SPECIAL_FOLDERS = [
-  { path: 'INBOX',   name: '受信トレイ',  icon: Inbox,    color: 'text-blue-500' },
-  { path: 'Sent',    name: '送信済み',    icon: Send,     color: 'text-green-500' },
-  { path: 'Drafts',  name: '下書き',      icon: FileText, color: 'text-yellow-500' },
-  { path: 'Starred', name: 'スター付き',  icon: Star,     color: 'text-orange-400' },
-  { path: 'Trash',   name: 'ゴミ箱',      icon: Trash2,   color: 'text-red-400' },
+  { path: 'INBOX',   name: '受信トレイ',  icon: Inbox,      color: 'text-blue-500' },
+  { path: 'Sent',    name: '送信済み',    icon: Send,       color: 'text-green-500' },
+  { path: 'Drafts',  name: '下書き',      icon: FileText,   color: 'text-yellow-500' },
+  { path: 'Starred', name: 'スター付き',  icon: Star,       color: 'text-orange-400' },
+  { path: 'Spam',    name: '迷惑メール',  icon: ShieldAlert, color: 'text-orange-500' },
+  { path: 'Trash',   name: 'ゴミ箱',      icon: Trash2,     color: 'text-red-400' },
 ];
 
 const FOLDER_ORDER_KEY = 'mail:folderOrder';
@@ -34,7 +35,7 @@ function saveFolderOrder(order: string[]) {
 
 export function Sidebar({ onMobileClose }: { onMobileClose?: () => void }) {
   const { accounts, selectedAccountId, selectAccount } = useAccountStore();
-  const { selectedFolder, folders, selectFolder, syncEmails, syncing, loadThreads, folderUnreadCounts, moveEmail } = useMailStore();
+  const { selectedFolder, folders, selectFolder, syncEmails, syncing, loadThreads, folderUnreadCounts, moveEmail, clearSearch } = useMailStore();
   const { openCompose, openSettings, sidebarCollapsed, toggleSidebar } = useUIStore();
 
   const account = accounts.find((a) => a.id === selectedAccountId);
@@ -49,6 +50,7 @@ export function Sidebar({ onMobileClose }: { onMobileClose?: () => void }) {
     /重要/i, /important/i,
     /すべてのメール/i, /all\s*mail/i,
     /^\[gmail\]$/i,
+    /im-mail-config/i,
   ];
 
   function isDuplicateFolder(path: string, name: string): boolean {
@@ -162,6 +164,7 @@ export function Sidebar({ onMobileClose }: { onMobileClose?: () => void }) {
 
   async function handleFolderClick(path: string) {
     if (!selectedAccountId) return;
+    clearSearch();
     selectFolder(path);
     await loadThreads(selectedAccountId, path);
     syncEmails(selectedAccountId).catch(() => {});

@@ -2,7 +2,7 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import { ImapFlow, MailboxLockObject } from 'imapflow';
 import type { AccountConfig } from '../../../../types/shared';
 
-type ActionType = 'markRead' | 'markUnread' | 'star' | 'unstar' | 'delete' | 'move';
+type ActionType = 'markRead' | 'markUnread' | 'star' | 'unstar' | 'delete' | 'move' | 'spam';
 
 type RequestBody = {
   account: AccountConfig & { password: string };
@@ -35,17 +35,19 @@ export default async function handler(
     return res.status(400).json({ error: 'account, folder, uid, and action are required' });
   }
 
-  const { password, ...accountConfig } = account;
+  const { password, oauthAccessToken, ...accountConfig } = account;
 
   const client = new ImapFlow({
     host: accountConfig.imapHost,
     port: accountConfig.imapPort,
     secure: accountConfig.imapSecure,
-    auth: { user: accountConfig.email, pass: password },
+    auth: oauthAccessToken
+      ? { user: accountConfig.email, accessToken: oauthAccessToken }
+      : { user: accountConfig.email, pass: password },
     logger: false,
     tls: { rejectUnauthorized: false },
-    connectionTimeout: 30000,
-    socketTimeout: 55000,
+    connectionTimeout: 15000,
+    socketTimeout: 20000,
   });
 
   let lock: MailboxLockObject | null = null;
@@ -72,11 +74,12 @@ export default async function handler(
         break;
 
       case 'delete': {
-        const trashFolder = 'Trash';
+        // targetFolder にゴミ箱パスが渡された場合はそちらを優先（Gmail対応）
+        const trashFolder = targetFolder || 'Trash';
         try {
           await client.messageMove({ uid }, trashFolder, { uid: true });
         } catch {
-          // If no Trash folder, just add Deleted flag
+          // ゴミ箱への移動が失敗した場合は削除フラグ+expunge
           await client.messageFlagsAdd({ uid }, ['\\Deleted'], { uid: true });
           await client.messageDelete({ uid }, { uid: true });
         }
@@ -87,6 +90,16 @@ export default async function handler(
         if (!targetFolder) {
           return res.status(400).json({ error: 'targetFolder is required for move action' });
         }
+        await client.messageMove({ uid }, targetFolder, { uid: true });
+        break;
+      }
+
+      case 'spam': {
+        if (!targetFolder) {
+          return res.status(400).json({ error: 'targetFolder is required for spam action' });
+        }
+        // 既読フラグは移動前に立てる（移動後は同じ接続内でUIDが参照できなくなるため）
+        await client.messageFlagsAdd({ uid }, ['\\Seen'], { uid: true });
         await client.messageMove({ uid }, targetFolder, { uid: true });
         break;
       }

@@ -679,10 +679,27 @@ function FiltersTab() {
   const [filters, setFilters] = useState<FilterRule[]>([]);
   const [editing, setEditing] = useState<FilterRule | null>(null);
   const [creating, setCreating] = useState(false);
+  const [generating, setGenerating] = useState(false);
 
   useEffect(() => {
     if (selectedAccountId) api.filters.list(selectedAccountId).then((r: FilterRule[]) => setFilters(r));
   }, [selectedAccountId]);
+
+  async function handleGenerateFromFolders() {
+    if (!selectedAccountId || generating) return;
+    setGenerating(true);
+    try {
+      const { created, filters: updated } = await api.filters.generateFromFolders(selectedAccountId);
+      setFilters(updated as FilterRule[]);
+      alert(created > 0
+        ? `${created}件のフィルターをフォルダから生成しました。`
+        : '新たに生成できるフォルダはありませんでした（すべて登録済みです）。');
+    } catch (e) {
+      alert(`生成に失敗しました: ${(e as Error).message}`);
+    } finally {
+      setGenerating(false);
+    }
+  }
 
   async function handleDelete(id: string) {
     if (!confirm('このフィルターを削除しますか？')) return;
@@ -740,12 +757,22 @@ function FiltersTab() {
           <h3 className="text-base font-semibold text-gray-900 dark:text-white">フィルタールール</h3>
           <p className="text-xs text-gray-500 mt-0.5">条件に一致する受信メールを自動振り分け・既読化します</p>
         </div>
-        <button
-          onClick={() => setCreating(true)}
-          className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg bg-blue-600 hover:bg-blue-700 text-white"
-        >
-          <Plus size={13} /> 新規ルール
-        </button>
+        <div className="flex items-center gap-1.5">
+          <button
+            onClick={handleGenerateFromFolders}
+            disabled={generating}
+            title="既存フォルダ（Gmail等で振り分け済みを含む）から送信者を推測してフィルターを一括生成します"
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-50"
+          >
+            <FolderOpen size={13} /> {generating ? '生成中…' : 'フォルダから生成'}
+          </button>
+          <button
+            onClick={() => setCreating(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg bg-blue-600 hover:bg-blue-700 text-white"
+          >
+            <Plus size={13} /> 新規ルール
+          </button>
+        </div>
       </div>
 
       {filters.length === 0 ? (

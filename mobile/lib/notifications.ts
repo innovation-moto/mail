@@ -1,4 +1,5 @@
 import * as Notifications from 'expo-notifications';
+import Constants from 'expo-constants';
 import { Platform } from 'react-native';
 
 // フォアグラウンドでも通知を表示する設定
@@ -40,4 +41,19 @@ export async function showNewMailNotification(
 /** バッジ数を更新 */
 export async function setBadgeCount(count: number): Promise<void> {
   await Notifications.setBadgeCountAsync(count);
+}
+
+/** Expoプッシュトークンを取得（物理デバイスのみ） */
+export async function getExpoPushToken(): Promise<string | null> {
+  if (Platform.OS === 'web') return null;
+  try {
+    const projectId = Constants.expoConfig?.extra?.eas?.projectId
+      ?? Constants.easConfig?.projectId;
+    const token = await Notifications.getExpoPushTokenAsync(
+      projectId ? { projectId } : undefined,
+    );
+    return token.data;
+  } catch {
+    return null;
+  }
 }

@@ -8,6 +8,8 @@ import { BlurView } from 'expo-blur';
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import WebView from 'react-native-webview';
+import * as FileSystem from 'expo-file-system/legacy';
+import * as Sharing from 'expo-sharing';
 import { useMailStore } from '../../store/mailStore';
 import { useAccountStore } from '../../store/accountStore';
 import { getEmail, getThreadEmails } from '../../lib/db';
@@ -43,6 +45,12 @@ function formatFullDate(ts: number): string {
     year: 'numeric', month: 'long', day: 'numeric', weekday: 'short',
     hour: '2-digit', minute: '2-digit',
   });
+}
+
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 function escapeHtml(str: string): string {
@@ -92,12 +100,45 @@ function ReplyAllIcon({ size, color }: { size: number; color: string }) {
 
 type AiSheet = 'menu' | 'summary' | 'reply' | 'event' | null;
 
+type AttachmentMetaType = { filename: string; contentType: string; size: number; content: string };
+
+// 添付ファイル一覧（プレーンテキスト表示用のネイティブ版）
+function AttachmentsList({
+  hasAttachments, attachments, isLoading, onDownload,
+}: {
+  hasAttachments: boolean;
+  attachments: AttachmentMetaType[] | undefined;
+  isLoading: boolean;
+  onDownload: (index: number) => void;
+}) {
+  if (!hasAttachments) return null;
+  return (
+    <View style={s.attachmentsSection}>
+      <Text style={s.attachmentsTitle}>📎 添付ファイル</Text>
+      {attachments && attachments.length > 0 ? (
+        <View style={s.attachmentsList}>
+          {attachments.map((a, i) => (
+            <TouchableOpacity key={i} style={s.attChip} onPress={() => onDownload(i)}>
+              <Text style={s.attName} numberOfLines={1}>{a.filename}</Text>
+              <Text style={s.attSize}>{formatFileSize(a.size)}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      ) : attachments && attachments.length === 0 ? (
+        <Text style={s.attachmentsEmpty}>添付ファイルを読み込めませんでした</Text>
+      ) : (
+        <Text style={s.attachmentsEmpty}>{isLoading ? '取得中...' : '添付ファイルを準備中...'}</Text>
+      )}
+    </View>
+  );
+}
+
 export default function EmailDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { markRead, starEmail, deleteEmail, selectedFolder, folders, threadEmails } = useMailStore();
-  const { openAiKey, selectedAccountId } = useAccountStore();
+  const { openAiKey, selectedAccountId, accounts, getPassword } = useAccountStore();
 
   const [email, setEmail] = useState<Email | null>(null);
   const [threadMailList, setThreadMailList] = useState<Email[]>([]);
@@ -105,6 +146,11 @@ export default function EmailDetailScreen() {
   const [loading, setLoading] = useState(true);
   const [showHtml, setShowHtml] = useState(true);
   const [headerExpanded, setHeaderExpanded] = useState(false);
+
+  // 添付ファイル（メールIDごとにキャッシュ）
+  type AttachmentMeta = { filename: string; contentType: string; size: number; content: string };
+  const [attachmentsById, setAttachmentsById] = useState<Record<string, AttachmentMeta[]>>({});
+  const [attachmentsLoadingIds, setAttachmentsLoadingIds] = useState<Set<string>>(new Set());
 
   // Filter state
   const [filterVisible, setFilterVisible] = useState(false);
@@ -138,6 +184,7 @@ export default function EmailDetailScreen() {
     (async () => {
       const found = await getEmail(id);
       setEmail(found);
+      setAttachmentsById({});
 
       if (found && selectedAccountId && found.threadId) {
         try {
@@ -147,14 +194,19 @@ export default function EmailDetailScreen() {
             // 最新メール（一番最後）をデフォルト展開
             const latestId = allInThread[allInThread.length - 1]?.id;
             if (latestId) setExpandedIds(new Set([latestId]));
+            const latest = allInThread[allInThread.length - 1];
+            if (latest?.hasAttachments) fetchAttachmentsFor(latest);
           } else {
             setThreadMailList([]);
+            if (found.hasAttachments) fetchAttachmentsFor(found);
           }
         } catch {
           setThreadMailList([]);
+          if (found.hasAttachments) fetchAttachmentsFor(found);
         }
       } else {
         setThreadMailList([]);
+        if (found?.hasAttachments) fetchAttachmentsFor(found);
       }
 
       setLoading(false);
@@ -163,6 +215,91 @@ export default function EmailDetailScreen() {
       }
     })();
   }, [id]);
+
+  // 添付ファイル一覧をIMAP経由で取得（メールごとにキャッシュ、重複取得を防止）
+  const fetchAttachmentsFor = (m: Email) => {
+    setAttachmentsById((prevAtt) => {
+      if (prevAtt[m.id]) return prevAtt; // 取得済み
+      setAttachmentsLoadingIds((prevLoading) => {
+        if (prevLoading.has(m.id)) return prevLoading; // 取得中
+        (async () => {
+          const account = accounts.find((a) => a.id === selectedAccountId);
+          if (!account) {
+            setAttachmentsLoadingIds((s) => { const n = new Set(s); n.delete(m.id); return n; });
+            return;
+          }
+          try {
+            const password = await getPassword(account.id);
+            if (!password) return;
+            const { attachments } = await mailApi.fetchAttachments(account, password, m.folder || selectedFolder, m.uid);
+            setAttachmentsById((prev) => ({ ...prev, [m.id]: attachments }));
+          } catch (err) {
+            console.error('[attachments] fetch failed', err);
+            setAttachmentsById((prev) => ({ ...prev, [m.id]: [] }));
+          } finally {
+            setAttachmentsLoadingIds((s) => { const n = new Set(s); n.delete(m.id); return n; });
+          }
+        })();
+        return new Set(prevLoading).add(m.id);
+      });
+      return prevAtt;
+    });
+  };
+
+  const handleAttachmentDownload = async (emailId: string, index: number) => {
+    const att = attachmentsById[emailId]?.[index];
+    if (!att) return;
+    try {
+      const safeName = att.filename.replace(/[\/\\]/g, '_') || 'attachment';
+      const fileUri = `${FileSystem.cacheDirectory}${safeName}`;
+      await FileSystem.writeAsStringAsync(fileUri, att.content, { encoding: FileSystem.EncodingType.Base64 });
+      if (await Sharing.isAvailableAsync()) {
+        await Sharing.shareAsync(fileUri, { mimeType: att.contentType, dialogTitle: att.filename });
+      } else {
+        Alert.alert('保存完了', `${safeName} を一時フォルダに保存しました`);
+      }
+    } catch (err) {
+      Alert.alert('エラー', (err as Error).message);
+    }
+  };
+
+  // 添付ファイルセクションのHTML（WebView内に埋め込んでpostMessage経由でダウンロードを起動）
+  const buildAttachmentsSectionHtml = (m: Email): string => {
+    if (!m.hasAttachments) return '';
+    const atts = attachmentsById[m.id];
+    const isLoading = attachmentsLoadingIds.has(m.id);
+    let inner: string;
+    if (atts && atts.length > 0) {
+      inner = atts.map((a, i) => `
+        <div class="att-chip" onclick="window.ReactNativeWebView.postMessage(JSON.stringify({type:'attachment', emailId:'${m.id}', index:${i}}))">
+          <span class="att-name">${escapeHtml(a.filename)}</span>
+          <span class="att-size">${formatFileSize(a.size)}</span>
+        </div>
+      `).join('');
+    } else if (atts && atts.length === 0) {
+      inner = `<div class="att-empty">添付ファイルを読み込めませんでした</div>`;
+    } else if (isLoading) {
+      inner = `<div class="att-empty">取得中...</div>`;
+    } else {
+      inner = `<div class="att-empty">添付ファイルを準備中...</div>`;
+    }
+    return `
+      <div class="attachments-section">
+        <div class="attachments-title">📎 添付ファイル</div>
+        <div class="attachments-list">${inner}</div>
+      </div>
+    `;
+  };
+
+  const ATTACHMENTS_CSS = `
+    .attachments-section { padding: 12px 16px; border-top: 0.5px solid #F0F0F0; }
+    .attachments-title { font-size: 12px; font-weight: 600; color: #8E8E93; margin-bottom: 8px; }
+    .attachments-list { display: flex; flex-wrap: wrap; gap: 8px; }
+    .att-chip { display: inline-flex; flex-direction: column; padding: 8px 12px; background: #F2F2F7; border-radius: 10px; max-width: 220px; }
+    .att-name { font-size: 13px; font-weight: 600; color: #1c1c1e; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 196px; }
+    .att-size { font-size: 11px; color: #8E8E93; margin-top: 2px; }
+    .att-empty { font-size: 12px; color: #8E8E93; }
+  `;
 
   const openSheet = (sheet: AiSheet) => {
     setAiSheet(sheet);
@@ -377,6 +514,7 @@ export default function EmailDetailScreen() {
         .body-content img { max-width: 100%; height: auto; }
         .body-content table { max-width: 100%; }
         .body-content pre, .body-content code { white-space: pre-wrap; word-wrap: break-word; }
+        ${ATTACHMENTS_CSS}
       </style></head>
       <body>
         <div class="sender-card">
@@ -392,6 +530,7 @@ export default function EmailDetailScreen() {
         <div class="body-content">
           ${m.bodyHtml || m.bodyText.replace(/\n/g, '<br>')}
         </div>
+        ${buildAttachmentsSectionHtml(m)}
       </body></html>
     `;
   };
@@ -417,6 +556,7 @@ export default function EmailDetailScreen() {
       .body-content img { max-width: 100%; height: auto; }
       .body-content table { max-width: 100%; }
       .body-content pre, .body-content code { white-space: pre-wrap; word-wrap: break-word; }
+      ${ATTACHMENTS_CSS}
       .bottom-pad { height: 140px; }
     </style></head>
     <body>
@@ -437,6 +577,7 @@ export default function EmailDetailScreen() {
       <div class="body-content">
         ${email.bodyHtml || email.bodyText.replace(/\n/g, '<br>')}
       </div>
+      ${buildAttachmentsSectionHtml(email)}
       <div class="bottom-pad"></div>
     </body></html>
   `;
@@ -471,8 +612,13 @@ export default function EmailDetailScreen() {
   const toggleExpand = (mailId: string) => {
     setExpandedIds(prev => {
       const next = new Set(prev);
-      if (next.has(mailId)) next.delete(mailId);
-      else next.add(mailId);
+      if (next.has(mailId)) {
+        next.delete(mailId);
+      } else {
+        next.add(mailId);
+        const m = threadMailList.find(t => t.id === mailId);
+        if (m?.hasAttachments) fetchAttachmentsFor(m);
+      }
       return next;
     });
   };
@@ -539,6 +685,9 @@ export default function EmailDetailScreen() {
                             try {
                               const data = JSON.parse(e.nativeEvent.data);
                               if (data.type === 'link' && data.url) Linking.openURL(data.url).catch(() => {});
+                              if (data.type === 'attachment' && data.emailId && typeof data.index === 'number') {
+                                handleAttachmentDownload(data.emailId, data.index);
+                              }
                             } catch {}
                           }}
                           onShouldStartLoadWithRequest={(req) => {
@@ -550,7 +699,15 @@ export default function EmailDetailScreen() {
                           }}
                         />
                       ) : (
-                        <LinkifiedText style={s.bodyText} text={m.bodyText || '本文がありません'} />
+                        <>
+                          <LinkifiedText style={s.bodyText} text={m.bodyText || '本文がありません'} />
+                          <AttachmentsList
+                            hasAttachments={m.hasAttachments}
+                            attachments={attachmentsById[m.id]}
+                            isLoading={attachmentsLoadingIds.has(m.id)}
+                            onDownload={(i) => handleAttachmentDownload(m.id, i)}
+                          />
+                        </>
                       )}
                     </View>
                   )}
@@ -578,6 +735,9 @@ export default function EmailDetailScreen() {
                     const data = JSON.parse(e.nativeEvent.data);
                     if (data.type === 'scroll') scrollY.setValue(data.y);
                     if (data.type === 'link' && data.url) Linking.openURL(data.url).catch(() => {});
+                    if (data.type === 'attachment' && data.emailId && typeof data.index === 'number') {
+                      handleAttachmentDownload(data.emailId, data.index);
+                    }
                   } catch {}
                 }}
                 onShouldStartLoadWithRequest={(req) => {
@@ -636,6 +796,12 @@ export default function EmailDetailScreen() {
                   </View>
                 )}
                 <LinkifiedText style={s.bodyText} text={email.bodyText || '本文がありません'} />
+                <AttachmentsList
+                  hasAttachments={email.hasAttachments}
+                  attachments={attachmentsById[email.id]}
+                  isLoading={attachmentsLoadingIds.has(email.id)}
+                  onDownload={(i) => handleAttachmentDownload(email.id, i)}
+                />
               </Animated.ScrollView>
             )}
           </>
@@ -999,6 +1165,18 @@ const s = StyleSheet.create({
   toggleActiveText: { color: '#000', fontWeight: '600' },
   textScroll: { flex: 1 },
   bodyText: { fontSize: 15, color: '#1c1c1e', lineHeight: 22, paddingHorizontal: 16, paddingTop: 12 },
+
+  // ─── 添付ファイル（ネイティブ版） ───
+  attachmentsSection: { paddingHorizontal: 16, paddingTop: 16, paddingBottom: 4 },
+  attachmentsTitle: { fontSize: 12, fontWeight: '600', color: '#8E8E93', marginBottom: 8 },
+  attachmentsList: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  attChip: {
+    paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10,
+    backgroundColor: '#F2F2F7', maxWidth: 220,
+  },
+  attName: { fontSize: 13, fontWeight: '600', color: '#1c1c1e' },
+  attSize: { fontSize: 11, color: '#8E8E93', marginTop: 2 },
+  attachmentsEmpty: { fontSize: 12, color: '#8E8E93' },
 
   // ─── スレッドアコーディオン ───
   accordionItem: {

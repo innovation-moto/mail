@@ -164,7 +164,7 @@ export const useMailStore = create<MailStore>((set, get) => ({
 
     try {
     const { selectedFolder } = get();
-    const SKIP = /Trash|ゴミ箱|Deleted|Spam|Junk|迷惑|Draft|下書き|Outbox|allmail|all mail|すべてのメール|重要|Important|IM-Mail-Config/i;
+    const SKIP = /Trash|ゴミ箱|Deleted|Draft|下書き|Outbox|allmail|all mail|すべてのメール|重要|Important|IM-Mail-Config/i;
 
     // フォルダ一覧を毎回取得・更新（新規カスタムフォルダの反映のため）
     let storefolders = get().folders;

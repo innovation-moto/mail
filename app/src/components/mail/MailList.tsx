@@ -11,7 +11,8 @@ import { api } from '@/lib/ipc';
 export function MailList() {
   const { selectedAccountId } = useAccountStore();
   const {
-    threads, selectedThreadId, selectedFolder, loading, loadingMoreThreads, hasMoreThreads, syncing,
+    threads, selectedThreadId, selectedFolder, loading, loadingMoreThreads, hasMoreThreads,
+    backfillingOlderEmails, syncing,
     selectThread, markAllRead, searchResults, searchQuery, isSmartSearch,
     smartSearchAnswer, clearSearch, search, smartSearch, syncEmails, loadMoreThreads, loadThreads,
     emails, selectedEmailId, selectEmail, markRead, loadingMore, hasMore, loadMoreEmails, clearThread,
@@ -27,12 +28,13 @@ export function MailList() {
     if (threadObserverRef.current) threadObserverRef.current.disconnect();
     if (!node) return;
     threadObserverRef.current = new IntersectionObserver((entries) => {
+      // DBにまだ続きがある場合のみ自動ロード（バックフィルはボタン経由）
       if (entries[0].isIntersecting && selectedAccountId && !loadingMoreThreads && hasMoreThreads) {
         loadMoreThreads(selectedAccountId);
       }
     }, { threshold: 0.1 });
     threadObserverRef.current.observe(node);
-  }, [selectedAccountId, loadingMoreThreads, hasMoreThreads, loadMoreThreads]);
+  }, [selectedAccountId, loadingMoreThreads, hasMoreThreads, backfillingOlderEmails, loadMoreThreads]);
 
   // 検索結果（個別メール）用無限スクロール
   const searchObserverRef = useRef<IntersectionObserver | null>(null);
@@ -216,8 +218,24 @@ export function MailList() {
                     }}
                   />
                 ))}
-                <div ref={threadBottomRef} className="h-8 flex items-center justify-center">
-                  {loadingMoreThreads && <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-500" />}
+                <div ref={threadBottomRef} className="h-10 flex items-center justify-center gap-2">
+                  {loadingMoreThreads && (
+                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-500" />
+                  )}
+                  {backfillingOlderEmails && (
+                    <>
+                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-500" />
+                      <span className="text-xs text-gray-400">過去のメールを取得中...</span>
+                    </>
+                  )}
+                  {!hasMoreThreads && !backfillingOlderEmails && !loadingMoreThreads && selectedAccountId && (
+                    <button
+                      onClick={() => loadMoreThreads(selectedAccountId)}
+                      className="text-xs text-gray-500 hover:text-gray-300 px-3 py-1 rounded hover:bg-white/5 transition-colors"
+                    >
+                      さらに読み込む
+                    </button>
+                  )}
                 </div>
               </>
             )}

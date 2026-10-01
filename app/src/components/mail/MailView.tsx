@@ -1,7 +1,7 @@
 'use client';
 import { useState, useEffect, useRef, useCallback } from 'react';
 import {
-  Reply, Forward, Trash2, Star, StarOff,
+  Reply, Forward, Trash2, Star,
   Sparkles, ChevronDown, ChevronUp, Paperclip, X, Copy, Check,
   ShieldBan, Filter, Plus, Loader2, Download, AlertTriangle, CalendarPlus, ChevronLeft,
 } from 'lucide-react';
@@ -14,7 +14,7 @@ import { cn, formatFullDate, formatEmailDate, getInitials, getAvatarColor, CATEG
 
 export function MailView() {
   const { selectedAccountId } = useAccountStore();
-  const { selectedEmail, selectedThreadId, threadEmails, loadingThread, starEmail, deleteEmail, updateEmailLocally, clearThread } = useMailStore();
+  const { selectedEmail, selectedThreadId, threadEmails, threadUnreadIds, loadingThread, starEmail, deleteEmail, updateEmailLocally, clearThread } = useMailStore();
   const { openCompose, setMobilePanel } = useUIStore();
   const email = selectedEmail();
 
@@ -25,6 +25,7 @@ export function MailView() {
         <ThreadView
           key={selectedThreadId}
           emails={threadEmails}
+          unreadIds={threadUnreadIds}
           accountId={selectedAccountId ?? ''}
           onBack={() => { clearThread(); setMobilePanel('list'); }}
           starEmail={starEmail}
@@ -91,9 +92,10 @@ export function MailView() {
 // ─── Thread View ────────────────────────────────────────────────────────────
 
 function ThreadView({
-  emails, accountId, onBack, starEmail, deleteEmail, updateEmailLocally, openCompose,
+  emails, unreadIds, accountId, onBack, starEmail, deleteEmail, updateEmailLocally, openCompose,
 }: {
   emails: Email[];
+  unreadIds: string[];
   accountId: string;
   onBack: () => void;
   starEmail: (id: string, starred: boolean) => Promise<void>;
@@ -101,10 +103,13 @@ function ThreadView({
   updateEmailLocally: (id: string, patch: Partial<Email>) => void;
   openCompose: (opts?: { replyTo?: Email; replyAll?: boolean; forwardFrom?: Email }) => void;
 }) {
-  // 最新のメールを最初から展開、その他は折りたたみ
+  // 最新のメールに加え、開いた時点で未読だったメールもすべて展開する
+  // （同一スレッドに連続で届いた未読を折りたたみで見落とさないため）。
+  // DBはDESC順なので先頭が最新。
   const [expandedIds, setExpandedIds] = useState<Set<string>>(() => {
-    const latest = emails[emails.length - 1];
-    return new Set(latest ? [latest.id] : []);
+    const ids = new Set<string>(unreadIds);
+    if (emails[0]) ids.add(emails[0].id);
+    return ids;
   });
 
   function toggleEmail(id: string) {
@@ -116,7 +121,7 @@ function ThreadView({
     });
   }
 
-  const latestEmail = emails[emails.length - 1];
+  const latestEmail = emails[0];
   const subject = emails[0]?.subject ?? '';
 
   return (
@@ -194,6 +199,7 @@ function ThreadEmailItem({
   const [localAttachments, setLocalAttachments] = useState(email.attachments ?? []);
   const [fetchingAttachments, setFetchingAttachments] = useState(false);
   const [showAddressDetail, setShowAddressDetail] = useState(false);
+  const [showQuickFilter, setShowQuickFilter] = useState(false);
   const [summarizing, setSummarizing] = useState(false);
   const [classifying, setClassifying] = useState(false);
   const [summaryResult, setSummaryResult] = useState<AiSummarizeResult | null>(
@@ -326,6 +332,13 @@ function ThreadEmailItem({
                       )}
                       <ChevronDown size={12} className={cn('text-gray-400 transition-transform', showAddressDetail && 'rotate-180')} />
                     </button>
+                    <button
+                      onClick={() => setShowQuickFilter(true)}
+                      title="このアドレスでフィルターを作成"
+                      className="p-1 rounded hover:bg-blue-50 dark:hover:bg-blue-900/30 text-gray-400 hover:text-blue-500 dark:hover:text-blue-400 transition-colors"
+                    >
+                      <Filter size={12} />
+                    </button>
                   </div>
 
                   {/* アドレス詳細 */}
@@ -377,7 +390,7 @@ function ThreadEmailItem({
             {/* Action bar */}
             <div className="flex items-center gap-1 mt-3 flex-wrap">
               <ActionButton
-                icon={email.isStarred ? <StarOff size={14} /> : <Star size={14} />}
+                icon={<Star size={14} className={email.isStarred ? 'fill-yellow-400 text-yellow-400' : ''} />}
                 label={email.isStarred ? 'スター解除' : 'スター'}
                 onClick={() => onStar(!email.isStarred)}
               />
@@ -403,18 +416,6 @@ function ThreadEmailItem({
                 className="flex items-center gap-1 px-2.5 py-1 text-xs rounded-lg bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 hover:bg-green-200 dark:hover:bg-green-900/50 disabled:opacity-50 transition-colors"
               >
                 <CalendarPlus size={12} /> {detectingCalendar ? '検出中…' : 'カレンダー'}
-              </button>
-              <button
-                onClick={onReply}
-                className="flex items-center gap-1 px-2.5 py-1 text-xs rounded-lg border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
-              >
-                <Reply size={12} /> 返信
-              </button>
-              <button
-                onClick={onForward}
-                className="flex items-center gap-1 px-2.5 py-1 text-xs rounded-lg border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
-              >
-                <Forward size={12} /> 転送
               </button>
             </div>
 
@@ -511,7 +512,7 @@ function ThreadEmailItem({
               <EmailHtmlView html={email.bodyHtml} />
             ) : (
               <pre className="text-sm text-gray-700 dark:text-gray-300 whitespace-pre-wrap font-sans leading-relaxed">
-                {email.bodyText}
+                <LinkifiedText text={email.bodyText} />
               </pre>
             )}
           </div>
@@ -538,6 +539,13 @@ function ThreadEmailItem({
             </div>
           )}
         </div>
+      )}
+      {showQuickFilter && (
+        <QuickFilterModal
+          email={email}
+          accountId={accountId}
+          onClose={() => setShowQuickFilter(false)}
+        />
       )}
     </div>
   );
@@ -738,7 +746,7 @@ function MailViewContent({
         {/* Action bar */}
         <div className="flex items-center gap-1 mt-3">
           <ActionButton
-            icon={email.isStarred ? <StarOff size={15} /> : <Star size={15} />}
+            icon={<Star size={15} className={email.isStarred ? 'fill-yellow-400 text-yellow-400' : ''} />}
             label={email.isStarred ? 'スター解除' : 'スター'}
             onClick={() => onStar(!email.isStarred)}
           />
@@ -890,7 +898,7 @@ function MailViewContent({
           <EmailHtmlView html={email.bodyHtml} />
         ) : (
           <pre className="text-sm text-gray-700 dark:text-gray-300 whitespace-pre-wrap font-sans leading-relaxed">
-            {email.bodyText}
+            <LinkifiedText text={email.bodyText} />
           </pre>
         )}
       </div>
@@ -934,6 +942,33 @@ function MailViewContent({
   );
 }
 
+const URL_REGEX = /(https?:\/\/[^\s<>"')\]]+)/;
+
+function LinkifiedText({ text }: { text: string }) {
+  const parts = text.split(URL_REGEX);
+  return (
+    <>
+      {parts.map((part, i) =>
+        URL_REGEX.test(part) ? (
+          <a
+            key={i}
+            href={part}
+            onClick={(e) => {
+              e.preventDefault();
+              (window as any).electronAPI?.shell?.openExternal(part);
+            }}
+            className="text-blue-500 hover:underline cursor-pointer break-all"
+          >
+            {part}
+          </a>
+        ) : (
+          <span key={i}>{part}</span>
+        ),
+      )}
+    </>
+  );
+}
+
 function EmailHtmlView({ html }: { html: string }) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
 
@@ -955,10 +990,23 @@ function EmailHtmlView({ html }: { html: string }) {
     const iframe = iframeRef.current;
     if (!iframe) return;
     try {
-      const body = iframe.contentDocument?.body;
+      const doc = iframe.contentDocument;
+      if (!doc) return;
+      const body = doc.body;
       if (body) {
         iframe.style.height = `${body.scrollHeight + 32}px`;
       }
+      // リンクをデフォルトブラウザで開く
+      doc.addEventListener('click', (e) => {
+        const target = (e.target as HTMLElement).closest('a');
+        if (!target) return;
+        const href = target.getAttribute('href');
+        if (!href) return;
+        e.preventDefault();
+        if (/^https?:\/\//i.test(href)) {
+          (window as any).electronAPI?.shell?.openExternal(href);
+        }
+      });
     } catch { /* cross-origin guard */ }
   }, []);
 

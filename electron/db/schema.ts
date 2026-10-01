@@ -36,6 +36,7 @@ CREATE TABLE IF NOT EXISTS emails (
   is_pinned INTEGER NOT NULL DEFAULT 0,
   is_deleted INTEGER NOT NULL DEFAULT 0,
   has_attachments INTEGER NOT NULL DEFAULT 0,
+  reply_to_address TEXT,
   ai_category TEXT,
   ai_priority TEXT,
   ai_summary TEXT,
@@ -117,4 +118,12 @@ INSERT OR IGNORE INTO settings VALUES ('theme', 'system');
 INSERT OR IGNORE INTO settings VALUES ('notifications_enabled', 'true');
 INSERT OR IGNORE INTO settings VALUES ('notify_high_only', 'false');
 INSERT OR IGNORE INTO settings VALUES ('sync_interval_sec', '30');
+
+CREATE TABLE IF NOT EXISTS folder_sync_state (
+  account_id TEXT NOT NULL,
+  folder TEXT NOT NULL,
+  last_uid INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (account_id, folder),
+  FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE
+);
 `;

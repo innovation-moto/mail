@@ -25,5 +25,6 @@ export function getAllSettings(): Settings {
     notificationsEnabled: map['notifications_enabled'] !== 'false',
     notifyHighOnly: map['notify_high_only'] === 'true',
     syncIntervalSec: parseInt(map['sync_interval_sec'] ?? '30', 10),
+    googleCalendarEmail: map['google_calendar_email'] ?? '',
   };
 }

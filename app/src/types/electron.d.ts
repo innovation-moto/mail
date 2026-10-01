@@ -16,6 +16,7 @@ import type {
   CalendarEvent,
   Signature,
   ThreadSummary,
+  EmailAddress,
 } from '@/types/shared';
 
 interface ElectronAPI {
@@ -47,6 +48,8 @@ interface ElectronAPI {
     fetchThreads: (accountId: string, folder: string, limit?: number, offset?: number) => Promise<ThreadSummary[]>;
     fetchThreadEmails: (accountId: string, threadId: string, folder: string) => Promise<Email[]>;
     getThreadUnreadCounts: (accountId: string) => Promise<Record<string, number>>;
+    backfillOlderEmails: (accountId: string, folder: string, limit?: number) => Promise<number>;
+    contactSuggestions: (accountId: string, query: string, limit?: number) => Promise<EmailAddress[]>;
   };
   ai: {
     detectCalendarEvent: (emailId: string) => Promise<CalendarEvent | null>;
@@ -74,6 +77,7 @@ interface ElectronAPI {
     create: (accountId: string, data: Omit<FilterRule, 'id' | 'accountId' | 'createdAt'>) => Promise<FilterRule>;
     update: (id: string, data: Partial<Omit<FilterRule, 'id' | 'accountId' | 'createdAt'>>) => Promise<FilterRule>;
     delete: (id: string) => Promise<void>;
+    generateFromFolders: (accountId: string) => Promise<{ created: number; filters: FilterRule[] }>;
   };
   folders: {
     create: (accountId: string, path: string) => Promise<void>;
@@ -85,6 +89,9 @@ interface ElectronAPI {
     create: (data: Omit<Signature, 'id' | 'createdAt'>) => Promise<Signature[]>;
     update: (id: string, data: Partial<Omit<Signature, 'id' | 'createdAt'>>) => Promise<Signature[]>;
     delete: (id: string) => Promise<Signature[]>;
+  };
+  shell: {
+    openExternal: (url: string) => Promise<void>;
   };
   on: (channel: string, callback: (...args: unknown[]) => void) => () => void;
 }

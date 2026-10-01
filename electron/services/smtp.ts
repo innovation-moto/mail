@@ -55,11 +55,17 @@ export async function sendEmail(account: Account, password: string, data: Compos
     tls: { rejectUnauthorized: false },
   });
 
+  if (!data.to || data.to.length === 0) {
+    throw new Error('宛先が指定されていません');
+  }
+
+  console.log('[smtp] envelope — to:', data.to, 'cc:', data.cc, 'bcc:', data.bcc);
+
   const mailOptions: nodemailer.SendMailOptions = {
     from: `"${account.name}" <${account.email}>`,
-    to: data.to.join(', '),
-    cc: data.cc.length > 0 ? data.cc.join(', ') : undefined,
-    bcc: data.bcc.length > 0 ? data.bcc.join(', ') : undefined,
+    to: data.to,
+    cc: data.cc.length > 0 ? data.cc : undefined,
+    bcc: data.bcc.length > 0 ? data.bcc : undefined,
     subject: data.subject,
     text: data.bodyText,
     html: data.bodyHtml,
@@ -70,9 +76,24 @@ export async function sendEmail(account: Account, password: string, data: Compos
     mailOptions.references = data.replyToMessageId;
   }
 
+  if (data.attachments?.length) {
+    mailOptions.attachments = data.attachments.map((a) => ({
+      filename: a.filename,
+      content: Buffer.from(a.content, 'base64'),
+      contentType: a.contentType,
+    }));
+  }
+
   try {
     // 送信 & rawメッセージを取得してSentフォルダに保存
     const info = await transporter.sendMail(mailOptions);
+
+    // 拒否されたアドレスがあれば警告
+    if (info.rejected?.length > 0) {
+      console.warn('[smtp] rejected recipients:', info.rejected);
+      throw new Error(`送信先に拒否されたアドレスがあります: ${info.rejected.join(', ')}`);
+    }
+
     const raw: Buffer = (info as any).message?.getMessageId
       ? await new Promise((resolve, reject) => {
           (info as any).message.build((err: Error, buf: Buffer) => err ? reject(err) : resolve(buf));

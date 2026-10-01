@@ -12,7 +12,7 @@ function writeLog(msg: string): void {
     fs.appendFileSync(logPath, line);
   } catch {}
 }
-import { getUnreadCount, listEmails, getTotalUnreadCount, getDistinctFolders, getAllFolderUnreadCounts, getThreadUnreadCounts } from '../db/queries/emails';
+import { getUnreadCount, listEmails, getTotalUnreadCount, getDistinctFolders, getThreadUnreadCounts } from '../db/queries/emails';
 import { syncAllFolders, fetchFolders } from './imap';
 import { getAllSettings } from '../db/queries/settings';
 import { showNewMailNotification } from './notification';
@@ -27,14 +27,17 @@ function updateBadge(): void {
 }
 
 let syncTimer: NodeJS.Timeout | null = null;
+let inboxCheckTimer: NodeJS.Timeout | null = null;
 let isSyncing = false;
 let cleanupDone = false;
+const isInboxChecking: Record<string, boolean> = {};
+const pendingInboxCheck: Record<string, boolean> = {}; // チェック中に次のチェックが必要になった場合のフラグ
 
 // フォルダリストのメモリキャッシュ（アカウントID → フォルダパス[]）
 const folderCache: Record<string, { folders: string[]; fetchedAt: number }> = {};
-const FOLDER_CACHE_TTL = 10 * 60 * 1000; // 10分
+const FOLDER_CACHE_TTL = 2 * 60 * 1000; // 2分
 
-const SKIP_FOLDERS = /Trash|ゴミ箱|Deleted|Spam|Junk|迷惑|Draft|下書き|Sent|送信済み|Sent Items|Outbox|IM-Mail-Config/i;
+const SKIP_FOLDERS = /Trash|ゴミ箱|Deleted|Outbox|IM-Mail-Config/i;
 
 async function getFoldersToSync(account: any, password: string): Promise<string[]> {
   const now = Date.now();
@@ -76,15 +79,16 @@ export async function syncAllAccounts(win?: BrowserWindow): Promise<void> {
     writeLog(`accounts count=${accounts.length}`);
     const settings = getAllSettings();
 
-    for (const account of accounts) {
+    // 全アカウントを並列同期（直列だと遅いアカウントが後続をブロックするため）
+    await Promise.all(accounts.map(async (account) => {
       const encPwd = getEncryptedPassword(account.id);
-      if (!encPwd) continue;
+      if (!encPwd) return;
 
       let password: string;
       try {
         password = safeStorage.decryptString(encPwd);
       } catch {
-        continue;
+        return;
       }
 
       // 初回のみ IM-Mail-Config メールをIMAPから一括削除
@@ -118,18 +122,27 @@ export async function syncAllAccounts(win?: BrowserWindow): Promise<void> {
         const foldersToSync = await getFoldersToSync(account, password);
 
         let totalAdded = 0;
-        const beforeInboxCount = getUnreadCount(account.id, 'INBOX');
 
-        // 1接続で全フォルダを順番に同期（Gmail接続過多によるタイムアウト解消）
-        const { totalAdded: added } = await syncAllFolders(
+        // 1接続で全フォルダを順番に同期（最大3分でタイムアウト）
+        const syncPromise = syncAllFolders(
           account,
           password,
           foldersToSync,
           50,
-          (folder, folderAdded) => {
+          (folder, folderAdded, folderUnreadAdded) => {
+            // 未読の新着があれば通知（INBOX・カスタムフォルダ問わず）
+            if (folderUnreadAdded > 0 && settings.notificationsEnabled) {
+              writeLog(`[notif-check] account=${account.email} folder=${folder} unreadAdded=${folderUnreadAdded}`);
+              const latest = listEmails(account.id, folder, 1, 0)[0];
+              showNewMailNotification(account.email, folderUnreadAdded, latest
+                ? { from: latest.from.name || latest.from.address, subject: latest.subject, bodyText: latest.bodyText }
+                : undefined,
+                latest?.id,
+              );
+            }
             // フォルダごとに完了したら即座にrendererへ通知
             if (folderAdded > 0) {
-              const unreadCounts = getAllFolderUnreadCounts(account.id);
+              const unreadCounts = getThreadUnreadCounts(account.id);
               updateBadge();
               win?.webContents.send('mail:synced', {
                 accountId: account.id,
@@ -139,22 +152,15 @@ export async function syncAllAccounts(win?: BrowserWindow): Promise<void> {
             }
           },
         );
+        const timeoutPromise = new Promise<{ totalAdded: number }>(
+          (_, reject) => setTimeout(() => reject(new Error('sync timeout')), 3 * 60 * 1000),
+        );
+        const { totalAdded: added } = await Promise.race([syncPromise, timeoutPromise]);
         totalAdded = added;
-
-        // INBOX の新着通知
-        const afterInboxCount = getUnreadCount(account.id, 'INBOX');
-        const newCount = afterInboxCount - beforeInboxCount;
-        if (newCount > 0 && settings.notificationsEnabled) {
-          const latest = listEmails(account.id, 'INBOX', 1, 0)[0];
-          showNewMailNotification(account.email, newCount, latest
-            ? { from: latest.from.name || latest.from.address, subject: latest.subject, bodyText: latest.bodyText }
-            : undefined,
-          );
-        }
 
         // 全フォルダ完了後に最終の未読数・バッジを更新
         updateBadge();
-        const unreadCounts = getAllFolderUnreadCounts(account.id);
+        const unreadCounts = getThreadUnreadCounts(account.id);
         win?.webContents.send('mail:synced', {
           accountId: account.id,
           added: totalAdded,
@@ -172,22 +178,76 @@ export async function syncAllAccounts(win?: BrowserWindow): Promise<void> {
         console.error(`[sync] Failed for ${account.email}:`, errMsg);
         writeLog(`FATAL account=${account.email}: ${errMsg}`);
       }
-    }
+    }));
   } finally {
     isSyncing = false;
   }
 }
 
+async function quickInboxCheck(account: any, win: BrowserWindow): Promise<void> {
+  if (isInboxChecking[account.id]) {
+    // 前のチェック中に次のチェックが必要になった場合はフラグを立てる
+    pendingInboxCheck[account.id] = true;
+    return;
+  }
+  isInboxChecking[account.id] = true;
+  pendingInboxCheck[account.id] = false;
+  try {
+    const encPwd = getEncryptedPassword(account.id);
+    if (!encPwd) return;
+    let password: string;
+    try { password = safeStorage.decryptString(encPwd); } catch { return; }
+
+    const settings = getAllSettings();
+    const { totalAdded } = await syncAllFolders(account, password, ['INBOX'], 20);
+    if (totalAdded > 0) {
+      writeLog(`[inbox-check] account=${account.email} totalAdded=${totalAdded}`);
+      if (settings.notificationsEnabled) {
+        // フィルタ移動先も含め最新メールを取得
+        const latest = listEmails(account.id, 'INBOX', 1, 0)[0];
+        showNewMailNotification(account.email, totalAdded, latest
+          ? { from: latest.from.name || latest.from.address, subject: latest.subject, bodyText: latest.bodyText }
+          : undefined,
+          latest?.id,
+        );
+      }
+      updateBadge();
+      const unreadCounts = getThreadUnreadCounts(account.id);
+      win.webContents.send('mail:synced', { accountId: account.id, added: totalAdded, unreadCounts });
+    }
+  } catch (e) {
+    writeLog(`[inbox-check] error account=${account.email}: ${(e as Error).message}`);
+  } finally {
+    isInboxChecking[account.id] = false;
+    // チェック中に次のチェックが必要になっていた場合は再チェック
+    if (pendingInboxCheck[account.id]) {
+      pendingInboxCheck[account.id] = false;
+      quickInboxCheck(account, win).catch(() => {});
+    }
+  }
+}
+
+async function quickInboxCheckAll(win: BrowserWindow): Promise<void> {
+  const accounts = listAccounts();
+  await Promise.all(accounts.map((account) => quickInboxCheck(account, win)));
+}
+
 export function startSync(win: BrowserWindow): void {
   const settings = getAllSettings();
-  const intervalMs = (settings.syncIntervalSec ?? 30) * 1000;
+  // フルsync（全フォルダ）は5分間隔
+  const fullSyncIntervalMs = Math.max((settings.syncIntervalSec ?? 30) * 1000, 5 * 60 * 1000);
 
-  // 初回即時同期
+  // 初回即時フルsync
   syncAllAccounts(win).catch(console.error);
 
   syncTimer = setInterval(() => {
     syncAllAccounts(win).catch(console.error);
-  }, intervalMs);
+  }, fullSyncIntervalMs);
+
+  // INBOXのみ30秒ごとに高速チェック（通知・新着検知用）
+  inboxCheckTimer = setInterval(() => {
+    quickInboxCheckAll(win).catch(console.error);
+  }, 30 * 1000);
 
   // IMAP IDLE で各アカウントの INBOX をリアルタイム監視
   const accounts = listAccounts();
@@ -205,6 +265,10 @@ export function stopSync(): void {
   if (syncTimer) {
     clearInterval(syncTimer);
     syncTimer = null;
+  }
+  if (inboxCheckTimer) {
+    clearInterval(inboxCheckTimer);
+    inboxCheckTimer = null;
   }
   stopAllIdleWatchers();
 }

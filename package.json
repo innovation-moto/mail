@@ -11,7 +11,7 @@
     "build": "npm run build:next && npm run build:electron",
     "build:next": "cd app && node_modules/.bin/next build",
     "build:electron": "tsc -p tsconfig.electron.json",
-    "package": "npm run build && electron-builder",
+    "package": "npm run build && cross-env APPLE_KEYCHAIN_PROFILE=AC_PASSWORD electron-builder",
     "postinstall": "electron-builder install-app-deps"
   },
   "dependencies": {
@@ -53,9 +53,13 @@
       "!node_modules/.cache"
     ],
     "mac": {
-      "target": "dmg",
+      "target": { "target": "dir", "arch": ["arm64"] },
       "category": "public.app-category.productivity",
-      "icon": "build/icon.icns"
+      "icon": "build/icon.icns",
+      "hardenedRuntime": true,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
+      "notarize": true
     },
     "win": {
       "target": "nsis"

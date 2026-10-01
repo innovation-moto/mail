@@ -1,11 +1,15 @@
 import { create } from 'zustand';
 import * as SecureStore from 'expo-secure-store';
 import type { Account } from '@/shared/types';
+import { registerAccountForPush, deregisterAccountFromPush } from '../lib/pushRegistration';
 
 const ACCOUNTS_KEY = 'im_mail_accounts';
 const PASSWORDS_KEY_PREFIX = 'im_mail_pwd_';
 const SELECTED_KEY = 'im_mail_selected_account';
 const OPENAI_KEY = 'im_mail_openai_key';
+const PUSH_TOKEN_KEY = 'im_mail_push_token';
+
+const MICROSOFT_CLIENT_ID = '263bba99-c8d1-4bfe-a2ae-9a6f9a0e0192';
 
 interface AccountStore {
   accounts: Account[];
@@ -21,6 +25,10 @@ interface AccountStore {
   getSelectedAccount(): Account | null;
   saveOpenAiKey(key: string): Promise<void>;
   clearOpenAiKey(): Promise<void>;
+  savePushToken(token: string): Promise<void>;
+  getPushToken(): Promise<string | null>;
+  refreshOAuthTokenIfNeeded(account: Account): Promise<Account>;
+  updateAccount(account: Account): Promise<void>;
 }
 
 export const useAccountStore = create<AccountStore>((set, get) => ({
@@ -50,7 +58,6 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
   async addAccount(account: Account, password: string) {
     const { accounts } = get();
 
-    // Save password in SecureStore separately
     await SecureStore.setItemAsync(`${PASSWORDS_KEY_PREFIX}${account.id}`, password);
 
     const updated = [...accounts.filter((a) => a.id !== account.id), account];
@@ -60,10 +67,28 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
     await SecureStore.setItemAsync(SELECTED_KEY, selectedAccountId);
 
     set({ accounts: updated, selectedAccountId });
+
+    // プッシュ通知に登録（失敗しても無視）
+    try {
+      const pushToken = await get().getPushToken();
+      if (pushToken) {
+        await registerAccountForPush(pushToken, account, password);
+      }
+    } catch {}
   },
 
   async removeAccount(id: string) {
     const { accounts, selectedAccountId } = get();
+
+    // プッシュ通知登録を解除（失敗しても無視）
+    try {
+      const account = accounts.find((a) => a.id === id);
+      const pushToken = await get().getPushToken();
+      if (account && pushToken) {
+        await deregisterAccountFromPush(pushToken, account.email);
+      }
+    } catch {}
+
     await SecureStore.deleteItemAsync(`${PASSWORDS_KEY_PREFIX}${id}`);
 
     const updated = accounts.filter((a) => a.id !== id);
@@ -100,6 +125,54 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
     return accounts.find((a) => a.id === selectedAccountId) ?? null;
   },
 
+  async updateAccount(account: Account): Promise<void> {
+    const { accounts } = get();
+    const updated = accounts.map((a) => a.id === account.id ? account : a);
+    await SecureStore.setItemAsync(ACCOUNTS_KEY, JSON.stringify(updated));
+    set({ accounts: updated });
+  },
+
+  async refreshOAuthTokenIfNeeded(account: Account): Promise<Account> {
+    if (!account.oauthRefreshToken) return account;
+    const expiresAt = account.oauthExpiresAt ?? 0;
+    if (expiresAt > Date.now() + 60000) return account;
+
+    const body = new URLSearchParams({
+      client_id: MICROSOFT_CLIENT_ID,
+      grant_type: 'refresh_token',
+      refresh_token: account.oauthRefreshToken,
+      scope: [
+        'offline_access', 'openid', 'email', 'profile',
+        'https://outlook.office.com/IMAP.AccessAsUser.All',
+        'https://outlook.office.com/SMTP.Send',
+      ].join(' '),
+    });
+
+    const res = await fetch('https://login.microsoftonline.com/common/oauth2/v2.0/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: body.toString(),
+    });
+
+    if (!res.ok) return account;
+
+    const data = await res.json() as {
+      access_token: string;
+      refresh_token?: string;
+      expires_in: number;
+    };
+
+    const refreshed: Account = {
+      ...account,
+      oauthAccessToken: data.access_token,
+      oauthRefreshToken: data.refresh_token ?? account.oauthRefreshToken,
+      oauthExpiresAt: Date.now() + data.expires_in * 1000,
+    };
+
+    await get().updateAccount(refreshed);
+    return refreshed;
+  },
+
   async saveOpenAiKey(key: string) {
     await SecureStore.setItemAsync(OPENAI_KEY, key);
     set({ openAiKey: key });
@@ -108,5 +181,17 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
   async clearOpenAiKey() {
     await SecureStore.deleteItemAsync(OPENAI_KEY);
     set({ openAiKey: null });
+  },
+
+  async savePushToken(token: string) {
+    await SecureStore.setItemAsync(PUSH_TOKEN_KEY, token);
+  },
+
+  async getPushToken(): Promise<string | null> {
+    try {
+      return await SecureStore.getItemAsync(PUSH_TOKEN_KEY);
+    } catch {
+      return null;
+    }
   },
 }));

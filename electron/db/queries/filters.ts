@@ -88,6 +88,90 @@ export function deleteFilter(id: string): void {
   getDb().prepare('DELETE FROM filters WHERE id = ?').run(id);
 }
 
+/** 指定フォルダを振り分け先とするフィルターをすべて削除（フォルダ削除時の連動用）。件数を返す。 */
+export function deleteFiltersByFolder(accountId: string, folder: string): number {
+  const info = getDb()
+    .prepare('DELETE FROM filters WHERE account_id = ? AND action_folder = ?')
+    .run(accountId, folder);
+  return info.changes;
+}
+
+// システムフォルダ（振り分け対象外）判定
+const SYSTEM_FOLDER_RE = [
+  /^inbox$/i, /(^|\/)sent/i, /送信済み/i, /(^|\/)draft/i, /下書き/i,
+  /(^|\/)trash/i, /ゴミ箱/i, /deleted/i, /(^|\/)spam/i, /junk/i, /迷惑/i,
+  /starred/i, /スター/i, /flagged/i, /すべてのメール/i, /all\s*mail/i,
+  /(^|\/)important/i, /重要/i, /im-mail-config/i, /^\[gmail\]$/i,
+];
+
+function isSystemFolder(folder: string): boolean {
+  return SYSTEM_FOLDER_RE.some((re) => re.test(folder));
+}
+
+/**
+ * 既存の各カスタムフォルダ（Gmail ラベル等でサーバ側振り分け済みを含む）から、
+ * そのフォルダに入っているメールの送信者を推測してアプリフィルターを自動生成する。
+ * 既にそのフォルダを振り分け先とするフィルターがある場合はスキップ（重複作成しない）。
+ * 生成したフィルター件数を返す。
+ */
+export function generateFiltersFromFolders(accountId: string): number {
+  const db = getDb();
+
+  // メールが存在する全フォルダ
+  const folders = (db.prepare(
+    'SELECT DISTINCT folder FROM emails WHERE account_id = ? AND is_deleted = 0',
+  ).all(accountId) as { folder: string }[]).map((r) => r.folder);
+
+  // 既にフィルターの振り分け先になっているフォルダ
+  const existing = new Set(
+    (db.prepare('SELECT DISTINCT action_folder FROM filters WHERE account_id = ? AND action_folder IS NOT NULL')
+      .all(accountId) as { action_folder: string }[]).map((r) => r.action_folder),
+  );
+
+  const now = Date.now();
+  let created = 0;
+
+  const insert = db.prepare(`
+    INSERT INTO filters (id, account_id, name, conditions, condition_type,
+      action_folder, action_mark_read, action_starred, active, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, 0, 0, 1, ?)
+  `);
+
+  for (const folder of folders) {
+    if (isSystemFolder(folder)) continue;
+    if (existing.has(folder)) continue;
+
+    // フォルダ内メールの送信者を頻度順に取得（最大8件）
+    const senders = db.prepare(`
+      SELECT from_address AS addr, COUNT(*) AS c
+      FROM emails
+      WHERE account_id = ? AND folder = ? AND is_deleted = 0 AND from_address != ''
+      GROUP BY lower(from_address)
+      ORDER BY c DESC
+      LIMIT 8
+    `).all(accountId, folder) as { addr: string; c: number }[];
+
+    if (senders.length === 0) continue;
+
+    const conditions: FilterCondition[] = senders.map((s) => ({
+      field: 'from',
+      operator: 'contains',
+      value: s.addr,
+    }));
+
+    insert.run(
+      uuidv4(), accountId, folder,
+      JSON.stringify(conditions),
+      'any',      // いずれかの送信者に一致
+      folder,     // 振り分け先＝そのフォルダ
+      now + created, // created_at を少しずらして並び順を安定化
+    );
+    created++;
+  }
+
+  return created;
+}
+
 export function replaceFiltersForAccount(accountId: string, rules: FilterRule[]): void {
   const db = getDb();
   db.prepare('DELETE FROM filters WHERE account_id = ?').run(accountId);

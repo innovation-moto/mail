@@ -1,4 +1,4 @@
-import { app, BrowserWindow, nativeTheme, shell } from 'electron';
+import { app, BrowserWindow, nativeTheme, shell, Tray, Menu, nativeImage } from 'electron';
 import path from 'path';
 import { getDb, closeDb } from './db/index';
 import { registerAccountHandlers } from './ipc/accounts';
@@ -51,6 +51,53 @@ process.on('uncaughtException', (err) => {
 });
 
 let mainWindow: BrowserWindow | null = null;
+let tray: Tray | null = null;
+
+function getTrayIconPath(): string {
+  if (isDev) {
+    return path.join(__dirname, '../../build/icon.png');
+  }
+  // パッケージ済み: electron-builder が Resources/ 直下に icon.png を置く
+  return path.join(process.resourcesPath, 'icon.png');
+}
+
+function updateTrayMenu(): void {
+  if (!tray) return;
+  const unread = getTotalUnreadCount();
+  const label = unread > 0 ? `IM Mail（未読 ${unread}件）` : 'IM Mail';
+  const menu = Menu.buildFromTemplate([
+    { label, enabled: false },
+    { type: 'separator' },
+    {
+      label: '開く',
+      click: () => {
+        if (!mainWindow) createWindow();
+        mainWindow?.show();
+        mainWindow?.focus();
+        app.focus({ steal: true });
+      },
+    },
+    { type: 'separator' },
+    { label: '終了', click: () => { app.quit(); } },
+  ]);
+  tray.setContextMenu(menu);
+}
+
+function createTray(): void {
+  const img = nativeImage.createFromPath(getTrayIconPath());
+  const icon = img.isEmpty() ? nativeImage.createEmpty() : img.resize({ width: 16, height: 16 });
+  icon.setTemplateImage(true); // macOS: ダーク/ライトモード自動対応
+  tray = new Tray(icon);
+  tray.setToolTip('IM Mail');
+  updateTrayMenu();
+
+  tray.on('click', () => {
+    if (!mainWindow) createWindow();
+    mainWindow?.show();
+    mainWindow?.focus();
+    app.focus({ steal: true });
+  });
+}
 
 function createWindow(): void {
   mainWindow = new BrowserWindow({
@@ -86,6 +133,14 @@ function createWindow(): void {
     mainWindow.loadFile(indexPath);
   }
 
+  // ×ボタンで閉じてもウィンドウを非表示にしてトレイに常駐
+  mainWindow.on('close', (event) => {
+    if (!(app as any).isQuitting) {
+      event.preventDefault();
+      mainWindow?.hide();
+    }
+  });
+
   mainWindow.on('closed', () => {
     mainWindow = null;
   });
@@ -113,7 +168,16 @@ function initializeApp(): void {
 
 app.whenReady().then(() => {
   initializeApp();
+  createTray();
   createWindow();
+
+  // ログイン時に自動起動（初回のみ設定）
+  if (app.isPackaged && process.platform === 'darwin') {
+    const loginSettings = app.getLoginItemSettings();
+    if (!loginSettings.openAtLogin) {
+      app.setLoginItemSettings({ openAtLogin: true, openAsHidden: true });
+    }
+  }
 
   if (mainWindow) {
     // 起動時にDBの未読数をバッジに反映
@@ -126,20 +190,26 @@ app.whenReady().then(() => {
   }
 
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
+    // Dock アイコンクリックでウィンドウを再表示
+    if (mainWindow) {
+      mainWindow.show();
+      mainWindow.focus();
+    } else {
       createWindow();
     }
   });
 });
 
 app.on('window-all-closed', () => {
-  stopSync();
+  // macOS: トレイに常駐するので終了しない
   if (process.platform !== 'darwin') {
+    stopSync();
     app.quit();
   }
 });
 
 app.on('before-quit', () => {
+  (app as any).isQuitting = true;
   stopSync();
   closeDb();
 });

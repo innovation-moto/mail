@@ -3,9 +3,12 @@ import { Stack } from 'expo-router';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { StatusBar } from 'expo-status-bar';
+import * as SplashScreen from 'expo-splash-screen';
 import { useAccountStore } from '../store/accountStore';
 import { initDb } from '../lib/db';
 import { syncPushRegistrations } from '../lib/pushRegistration';
+
+SplashScreen.preventAutoHideAsync();
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -21,8 +24,12 @@ function AppInit({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     (async () => {
-      await initDb();
-      await init();
+      try {
+        await initDb();
+        await init();
+      } finally {
+        await SplashScreen.hideAsync();
+      }
 
       // 通知権限を要求してプッシュトークンを取得・登録
       try {
@@ -59,7 +66,7 @@ export default function RootLayout() {
           <Stack screenOptions={{ headerShown: false }}>
             <Stack.Screen name="index" options={{ headerShown: false }} />
             <Stack.Screen name="email/[id]" options={{ headerShown: false, presentation: 'card' }} />
-            <Stack.Screen name="compose" options={{ headerShown: false, presentation: 'formSheet', gestureEnabled: true }} />
+            <Stack.Screen name="compose" options={{ headerShown: false, presentation: 'formSheet', gestureEnabled: true, contentStyle: { flex: 1, height: '100%', backgroundColor: '#ffffff' } }} />
             <Stack.Screen name="settings" options={{ headerShown: false, presentation: 'card' }} />
             <Stack.Screen name="setup" options={{ headerShown: false, presentation: 'modal' }} />
           </Stack>

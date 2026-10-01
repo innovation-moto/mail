@@ -12,14 +12,16 @@ async function safeLogout(client: ImapFlow): Promise<void> {
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') return res.status(405).end();
 
-  const { account } = req.body as { account: { email: string; password: string; imapHost: string; imapPort: number; imapSecure: boolean } };
+  const { account } = req.body as { account: { email: string; password: string; imapHost: string; imapPort: number; imapSecure: boolean; oauthAccessToken?: string } };
   if (!account) return res.status(400).json({ error: 'account required' });
 
   const client = new ImapFlow({
     host: account.imapHost,
     port: account.imapPort,
     secure: account.imapSecure,
-    auth: { user: account.email, pass: account.password },
+    auth: account.oauthAccessToken
+      ? { user: account.email, accessToken: account.oauthAccessToken }
+      : { user: account.email, pass: account.password },
     logger: false,
     tls: { rejectUnauthorized: false },
     connectionTimeout: 15000,

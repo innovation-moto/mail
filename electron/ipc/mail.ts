@@ -17,13 +17,49 @@ import {
   getAttachmentContent,
   saveAttachments,
   getTotalUnreadCount,
+  listThreads,
+  getThreadEmails,
+  getThreadUnreadCounts,
+  getDistinctFolders,
+  getContactSuggestions,
 } from '../db/queries/emails';
 
 function refreshBadge(): void {
   try { app.setBadgeCount(getTotalUnreadCount()); } catch { /* 無視 */ }
 }
-import { syncFolder, fetchFolders, imapMarkRead, imapMarkAllRead, imapPinEmail, imapDeleteEmail, imapMoveEmail, fetchAttachmentsForEmail } from '../services/imap';
+import { syncFolder, fetchFolders, imapMarkRead, imapMarkAllRead, imapPinEmail, imapDeleteEmail, imapMoveEmail, fetchAttachmentsForEmail, syncFolderOlderEmails } from '../services/imap';
 import { sendEmail } from '../services/smtp';
+import { listBlocklist } from '../db/queries/blocklist';
+import { getDb } from '../db/index';
+
+/**
+ * メールID（'accountId-uid-sourceFolder' 形式）から実際の IMAP フォルダを取得する。
+ * フィルタ移動メールは email.folder が表示フォルダに変わっているが、
+ * UID は元フォルダ（ID末尾）のものなので、そちらを使わないとフラグ更新が失敗する。
+ */
+function extractSourceFolder(emailId: string, accountId: string, fallbackFolder: string): string {
+  const prefix = `${accountId}-`;
+  if (!emailId.startsWith(prefix)) return fallbackFolder;
+  const rest = emailId.slice(prefix.length); // 'uid-sourceFolder'
+  const dashIdx = rest.indexOf('-');
+  if (dashIdx === -1) return fallbackFolder;
+  const sourceFolder = rest.slice(dashIdx + 1);
+  return sourceFolder || fallbackFolder;
+}
+
+function applyBlocklistToExistingEmails(accountId: string): void {
+  const entries = listBlocklist(accountId);
+  if (entries.length === 0) return;
+  const db = getDb();
+  for (const entry of entries) {
+    const pattern = entry.pattern.toLowerCase();
+    if (entry.type === 'address') {
+      db.prepare(`UPDATE emails SET folder = 'Trash', is_read = 1 WHERE account_id = ? AND lower(from_address) = ? AND folder != 'Trash'`).run(accountId, pattern);
+    } else {
+      db.prepare(`UPDATE emails SET folder = 'Trash', is_read = 1 WHERE account_id = ? AND lower(from_address) LIKE ? AND folder != 'Trash'`).run(accountId, `%@${pattern}`);
+    }
+  }
+}
 
 function getPassword(accountId: string): string {
   const enc = getEncryptedPassword(accountId);
@@ -52,7 +88,55 @@ export function registerMailHandlers(): void {
     const account = getAccount(accountId);
     if (!account) throw new Error('アカウントが見つかりません');
     const password = getPassword(accountId);
-    return syncFolder(account, password, folder);
+    applyBlocklistToExistingEmails(accountId);
+
+    // 仮想フォルダ名を実際のIMAPフォルダパスに解決
+    let imapFolder = folder;
+    const VIRTUAL_FOLDERS: Record<string, RegExp> = {
+      Sent:   /Sent|送信済み/i,
+      Drafts: /Draft|下書き/i,
+      Trash:  /Trash|ゴミ箱|Deleted Items/i,
+      Starred: /スター|Starred|Flagged/i,
+      Spam:   /Spam|Junk|迷惑/i,
+    };
+    if (folder in VIRTUAL_FOLDERS) {
+      const known = getDistinctFolders(accountId);
+      const re = VIRTUAL_FOLDERS[folder];
+      const fromDb = known.find((f) => re.test(f) && f !== folder);
+      if (fromDb) {
+        imapFolder = fromDb;
+      } else if (folder === 'Starred') {
+        imapFolder = 'INBOX';
+      } else if (folder === 'Spam') {
+        // まだ一度も同期されていない場合、DBに実パスが無いのでIMAPから直接探す
+        try {
+          const serverFolders = await fetchFolders(account, password);
+          const spamFolder = serverFolders.find((f) =>
+            f.specialUse === '\\Junk' ||
+            f.path.toLowerCase().includes('spam') ||
+            f.path.toLowerCase().includes('junk') ||
+            f.path.includes('迷惑'),
+          );
+          imapFolder = spamFolder?.path ?? folder;
+        } catch {
+          imapFolder = folder;
+        }
+      } else {
+        imapFolder = folder;
+      }
+    }
+
+    return syncFolder(account, password, imapFolder);
+  });
+
+  ipcMain.handle('mail:backfillOlderEmails', async (_e, accountId: string, folder: string, limit = 50) => {
+    const account = getAccount(accountId);
+    if (!account) throw new Error('アカウントが見つかりません');
+    // 仮想フォルダはバックフィル対象外
+    const VIRTUAL = new Set(['Starred', 'Sent', 'Drafts', 'Trash', 'Spam']);
+    if (VIRTUAL.has(folder)) return 0;
+    const password = getPassword(accountId);
+    return syncFolderOlderEmails(account, password, folder, limit);
   });
 
   ipcMain.handle('mail:send', async (_e, data: ComposeData) => {
@@ -71,7 +155,10 @@ export function registerMailHandlers(): void {
       const account = getAccount(email.accountId);
       if (!account) return;
       const password = getPassword(email.accountId);
-      await imapMarkRead(account, password, email.folder, email.uid, isRead);
+      // IDは 'accountId-uid-sourceFolder' 形式なので、実際にUIDが存在するフォルダを使う
+      // フィルタ移動メールは folder が表示フォルダに変わっているが UID は元フォルダのもの
+      const sourceFolder = extractSourceFolder(emailId, email.accountId, email.folder);
+      await imapMarkRead(account, password, sourceFolder, email.uid, isRead);
     } catch {}
   });
 
@@ -112,11 +199,13 @@ export function registerMailHandlers(): void {
     // Gmailと同様、ゴミ箱移動時に既読にする
     if (!email.isRead) markRead(emailId, true);
     markDeleted(emailId);
+    refreshBadge();
     try {
       const account = getAccount(email.accountId);
       if (!account) return;
       const password = getPassword(email.accountId);
-      await imapDeleteEmail(account, password, email.folder, email.uid);
+      const sourceFolder = extractSourceFolder(emailId, email.accountId, email.folder);
+      await imapDeleteEmail(account, password, sourceFolder, email.uid);
     } catch {}
   });
 
@@ -124,11 +213,13 @@ export function registerMailHandlers(): void {
     const email = getEmail(emailId);
     if (!email) return;
     moveEmail(emailId, toFolder);
+    refreshBadge();
     try {
       const account = getAccount(email.accountId);
       if (!account) return;
       const password = getPassword(email.accountId);
-      await imapMoveEmail(account, password, email.folder, email.uid, toFolder);
+      const sourceFolder = extractSourceFolder(emailId, email.accountId, email.folder);
+      await imapMoveEmail(account, password, sourceFolder, email.uid, toFolder);
     } catch {}
   });
 
@@ -136,8 +227,24 @@ export function registerMailHandlers(): void {
     return searchEmails(accountId, query);
   });
 
+  ipcMain.handle('mail:contactSuggestions', (_e, accountId: string, query: string, limit = 8) => {
+    return getContactSuggestions(accountId, query, limit);
+  });
+
   ipcMain.handle('mail:getUnreadCounts', (_e, accountId: string) => {
     return getAllFolderUnreadCounts(accountId);
+  });
+
+  ipcMain.handle('mail:getThreadUnreadCounts', (_e, accountId: string) => {
+    return getThreadUnreadCounts(accountId);
+  });
+
+  ipcMain.handle('mail:fetchThreads', (_e, accountId: string, folder: string, limit = 50, offset = 0) => {
+    return listThreads(accountId, folder, limit, offset);
+  });
+
+  ipcMain.handle('mail:fetchThreadEmails', (_e, accountId: string, threadId: string | null, folder: string) => {
+    return getThreadEmails(accountId, threadId, folder);
   });
 
   ipcMain.handle('mail:markSpam', async (_e, emailId: string) => {
@@ -167,6 +274,7 @@ export function registerMailHandlers(): void {
     // DBでも移動・既読にする
     moveEmail(emailId, targetFolder);
     markRead(emailId, true);
+    refreshBadge();
 
     return targetFolder;
   });
@@ -198,5 +306,12 @@ export function registerMailHandlers(): void {
     fs.writeFileSync(filePath, att.content);
     shell.showItemInFolder(filePath);
     return filePath;
+  });
+
+  ipcMain.handle('shell:openExternal', (_e, url: string) => {
+    // http(s) のみ許可
+    if (/^https?:\/\//i.test(url)) {
+      shell.openExternal(url);
+    }
   });
 }

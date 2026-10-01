@@ -8,15 +8,21 @@
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
     "splash": {
-      "image": "./assets/splash-icon.png",
-      "resizeMode": "contain",
-      "backgroundColor": "#ffffff"
+      "image": "./assets/screen.png",
+      "resizeMode": "cover",
+      "backgroundColor": "#000000"
     },
+    "backgroundColor": "#ffffff",
     "ios": {
       "supportsTablet": true,
       "infoPlist": {
-        "NSUserNotificationUsageDescription": "新着メールをお知らせするために通知を使用します。"
-      }
+        "NSUserNotificationUsageDescription": "新着メールをお知らせするために通知を使用します。",
+        "ITSAppUsesNonExemptEncryption": false,
+        "NSPhotoLibraryUsageDescription": "メールに写真を添付するために写真ライブラリへのアクセスが必要です。",
+        "NSCameraUsageDescription": "メールに写真を添付するためにカメラへのアクセスが必要です。",
+        "NSMicrophoneUsageDescription": "動画撮影のためにマイクへのアクセスが必要です。"
+      },
+      "bundleIdentifier": "com.innovationmusic.immailmobile"
     },
     "android": {
       "adaptiveIcon": {
@@ -35,14 +41,38 @@
       "expo-secure-store",
       "expo-font",
       [
+        "expo-image-picker",
+        {
+          "photosPermission": "メールに写真を添付するために写真ライブラリへのアクセスが必要です。",
+          "cameraPermission": "メールに写真を添付するためにカメラへのアクセスが必要です。",
+          "microphonePermission": "動画撮影のためにマイクへのアクセスが必要です。"
+        }
+      ],
+      [
+        "expo-media-library",
+        {
+          "photosPermission": "メールに写真を添付するために写真ライブラリへのアクセスが必要です。",
+          "savePhotosPermission": "撮影した写真を保存するために写真ライブラリへのアクセスが必要です。",
+          "isAccessMediaLocationEnabled": false
+        }
+      ],
+      [
         "expo-notifications",
         {
           "icon": "./assets/icon.png",
           "color": "#007AFF",
           "sounds": []
         }
-      ]
+      ],
+      "expo-web-browser"
     ],
-    "scheme": "im-mail"
+    "scheme": "im-mail",
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "7cf67c8a-730f-48cb-abf5-e5da01a3c4fa"
+      }
+    },
+    "owner": "innovation-music"
   }
 }

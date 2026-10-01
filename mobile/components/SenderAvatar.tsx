@@ -9,22 +9,24 @@ const AVATAR_COLORS = [
 ];
 
 function getAvatarColor(email: string): string {
+  if (!email) return AVATAR_COLORS[0];
   let hash = 0;
   for (let i = 0; i < email.length; i++) hash = email.charCodeAt(i) + ((hash << 5) - hash);
   return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length];
 }
 
 function getInitials(name: string, email: string): string {
-  if (name) {
+  if (name?.trim()) {
     const parts = name.trim().split(/\s+/);
     if (parts.length >= 2) return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
     return name[0].toUpperCase();
   }
-  return email[0].toUpperCase();
+  if (email?.length) return email[0].toUpperCase();
+  return '?';
 }
 
 function getFaviconUrl(emailAddress: string): string {
-  const domain = emailAddress.split('@')[1] ?? '';
+  const domain = emailAddress?.split('@')[1] ?? '';
   return `https://www.google.com/s2/favicons?domain=${domain}&sz=64`;
 }
 

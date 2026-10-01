@@ -1,6 +1,6 @@
 import { ipcMain, safeStorage } from 'electron';
 import { FilterRule } from '../../shared/types';
-import { listFilters, createFilter, updateFilter, deleteFilter, getFilterAccountId } from '../db/queries/filters';
+import { listFilters, createFilter, updateFilter, deleteFilter, getFilterAccountId, deleteFiltersByFolder, generateFiltersFromFolders } from '../db/queries/filters';
 import { getAccount, getEncryptedPassword } from '../db/queries/accounts';
 import { createFolder, deleteFolder, fetchFolders } from '../services/imap';
 import { pushFilterRulesToImap } from '../services/filterSync';
@@ -46,6 +46,13 @@ export function registerFilterHandlers(): void {
     if (accountId) pushAfterChange(accountId);
   });
 
+  // 既存フォルダ（Gmail 振り分け済みを含む）から送信者を推測してフィルターを一括生成
+  ipcMain.handle('filters:generateFromFolders', (_e, accountId: string) => {
+    const created = generateFiltersFromFolders(accountId);
+    if (created > 0) pushAfterChange(accountId);
+    return { created, filters: listFilters(accountId) };
+  });
+
   ipcMain.handle('folders:create', async (_e, accountId: string, folderPath: string) => {
     const account = getAccount(accountId);
     if (!account) throw new Error('アカウントが見つかりません');
@@ -58,5 +65,8 @@ export function registerFilterHandlers(): void {
     if (!account) throw new Error('アカウントが見つかりません');
     const password = getPassword(accountId);
     await deleteFolder(account, password, folderPath);
+    // フォルダ削除時、そのフォルダを振り分け先とするフィルターも連動削除
+    const removed = deleteFiltersByFolder(accountId, folderPath);
+    if (removed > 0) pushAfterChange(accountId);
   });
 }

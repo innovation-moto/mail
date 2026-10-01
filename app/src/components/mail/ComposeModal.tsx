@@ -4,9 +4,129 @@ import { X, Minimize2, Maximize2, Send, Paperclip, Sparkles, ChevronDown, PenLin
 import { useAccountStore } from '@/store/accountStore';
 import { useMailStore } from '@/store/mailStore';
 import { useUIStore } from '@/store/uiStore';
-import { ComposeData, Signature } from '@/types/shared';
+import { ComposeData, Signature, EmailAddress } from '@/types/shared';
 import { cn } from '@/lib/utils';
 import { api } from '@/lib/ipc';
+
+/**
+ * 宛先入力（カンマ区切り）。最後のトークンを過去の送受信履歴から補完する。
+ * ↑↓で選択 / Enter・Tab・クリックで確定 / Escで閉じる。
+ */
+function RecipientInput({
+  value,
+  onChange,
+  accountId,
+  placeholder,
+  autoFocus,
+  className,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  accountId: string;
+  placeholder: string;
+  autoFocus?: boolean;
+  className?: string;
+}) {
+  const [suggestions, setSuggestions] = useState<EmailAddress[]>([]);
+  const [open, setOpen] = useState(false);
+  const [active, setActive] = useState(0);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const lastToken = (v: string) => {
+    const idx = v.lastIndexOf(',');
+    return (idx === -1 ? v : v.slice(idx + 1)).trim();
+  };
+
+  useEffect(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    const token = lastToken(value);
+    if (!accountId || token.length < 1) {
+      setSuggestions([]);
+      setOpen(false);
+      return;
+    }
+    debounceRef.current = setTimeout(() => {
+      api.mail.contactSuggestions(accountId, token, 8).then((list) => {
+        const used = new Set(
+          value.split(',').map((s) => s.trim().toLowerCase()).filter(Boolean),
+        );
+        const filtered = list.filter((c) => !used.has(c.address.toLowerCase()));
+        setSuggestions(filtered);
+        setActive(0);
+        setOpen(filtered.length > 0);
+      }).catch(() => {});
+    }, 150);
+    return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
+  }, [value, accountId]);
+
+  useEffect(() => {
+    function onDocClick(e: MouseEvent) {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener('mousedown', onDocClick);
+    return () => document.removeEventListener('mousedown', onDocClick);
+  }, []);
+
+  function applySuggestion(c: EmailAddress) {
+    const idx = value.lastIndexOf(',');
+    const prefix = idx === -1 ? '' : `${value.slice(0, idx + 1)} `;
+    onChange(`${prefix}${c.address}, `);
+    setOpen(false);
+    setSuggestions([]);
+  }
+
+  function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (!open || suggestions.length === 0) return;
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setActive((a) => (a + 1) % suggestions.length);
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setActive((a) => (a - 1 + suggestions.length) % suggestions.length);
+    } else if (e.key === 'Enter' || e.key === 'Tab') {
+      e.preventDefault();
+      applySuggestion(suggestions[active]);
+    } else if (e.key === 'Escape') {
+      setOpen(false);
+    }
+  }
+
+  return (
+    <div ref={containerRef} className="relative flex-1">
+      <input
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        onKeyDown={handleKeyDown}
+        onFocus={() => { if (suggestions.length > 0) setOpen(true); }}
+        placeholder={placeholder}
+        autoFocus={autoFocus}
+        className={cn('w-full', className)}
+      />
+      {open && suggestions.length > 0 && (
+        <div className="absolute left-0 right-0 top-full mt-1 z-20 max-h-64 overflow-y-auto bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg">
+          {suggestions.map((c, i) => (
+            <button
+              key={c.address}
+              type="button"
+              onMouseDown={(e) => { e.preventDefault(); applySuggestion(c); }}
+              onMouseEnter={() => setActive(i)}
+              className={cn(
+                'w-full text-left px-3 py-1.5 flex flex-col',
+                i === active ? 'bg-blue-50 dark:bg-blue-900/30' : 'hover:bg-gray-50 dark:hover:bg-gray-700/50',
+              )}
+            >
+              {c.name && <span className="text-sm text-gray-800 dark:text-gray-200 truncate">{c.name}</span>}
+              <span className={cn('truncate', c.name ? 'text-xs text-gray-500' : 'text-sm text-gray-800 dark:text-gray-200')}>
+                {c.address}
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export function ComposeModal() {
   const { selectedAccountId, accounts } = useAccountStore();
@@ -25,10 +145,11 @@ export function ComposeModal() {
   const [signatures, setSignatures] = useState<Signature[]>([]);
   const [selectedSignatureId, setSelectedSignatureId] = useState<string | null>(null);
   const [showSignatureMenu, setShowSignatureMenu] = useState(false);
-  const [quotedContent, setQuotedContent] = useState<{ header: string; body: string } | null>(null);
+  const [quotedContent, setQuotedContent] = useState<string | null>(null);
   const [showQuoted, setShowQuoted] = useState(false);
   const [attachments, setAttachments] = useState<Array<{ filename: string; content: string; contentType: string; size: number }>>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const bodyRef = useRef<HTMLTextAreaElement>(null);
 
   const { replyTo, replyAll, forwardFrom } = composeState;
 
@@ -44,13 +165,22 @@ export function ComposeModal() {
   useEffect(() => {
     // 返信・転送の内容をまず設定
     if (replyTo) {
-      setTo(replyTo.from.address);
+      const myEmail = accounts.find((a) => a.id === fromAccountId)?.email ?? '';
+      // 返信先アドレスの決定:
+      // 1. Reply-To ヘッダーがあればそれを優先
+      // 2. 自分が送ったメール（from が自分）への返信は、To の最初のアドレスを使用
+      // 3. それ以外は From アドレス
+      const replyAddress =
+        replyTo.replyToAddress ||
+        (replyTo.from.address === myEmail
+          ? (replyTo.to.find((t) => t.address !== myEmail)?.address ?? replyTo.from.address)
+          : replyTo.from.address);
+      setTo(replyAddress);
       setSubject(`Re: ${replyTo.subject.replace(/^Re:\s*/i, '')}`);
       if (replyAll) {
-        const myEmail = accounts.find((a) => a.id === fromAccountId)?.email ?? '';
         const ccAddrs = [...replyTo.to, ...(replyTo.cc ?? [])]
           .map((a) => a.address)
-          .filter((addr) => addr !== myEmail && addr !== replyTo.from.address);
+          .filter((addr) => addr !== myEmail && addr !== replyAddress);
         if (ccAddrs.length > 0) {
           setCc(ccAddrs.join(', '));
           setShowCcBcc(true);
@@ -58,18 +188,15 @@ export function ComposeModal() {
       }
       if (replyTo.bodyText) {
         const date = new Date(replyTo.date).toLocaleString('ja-JP');
-        setQuotedContent({
-          header: `${date}, ${replyTo.from.name || replyTo.from.address} <${replyTo.from.address}>:`,
-          body: replyTo.bodyText,
-        });
+        const header = `${date}, ${replyTo.from.name || replyTo.from.address} <${replyTo.from.address}>:`;
+        const quotedBody = replyTo.bodyText.split('\n').map((l) => `> ${l}`).join('\n');
+        setQuotedContent(`${header}\n${quotedBody}`);
       }
     } else if (forwardFrom) {
       setSubject(`Fwd: ${forwardFrom.subject.replace(/^Fwd:\s*/i, '')}`);
       const date = new Date(forwardFrom.date).toLocaleString('ja-JP');
-      setQuotedContent({
-        header: `---------- 転送メッセージ ----------\n差出人: ${forwardFrom.from.address}\n件名: ${forwardFrom.subject}\n日時: ${date}`,
-        body: forwardFrom.bodyText,
-      });
+      const header = `---------- 転送メッセージ ----------\n差出人: ${forwardFrom.from.address}\n件名: ${forwardFrom.subject}\n日時: ${date}`;
+      setQuotedContent(`${header}\n${forwardFrom.bodyText}`);
     }
     setBody('');
 
@@ -81,6 +208,21 @@ export function ComposeModal() {
       if (def) setBody(buildBodyWithSignature('', def));
     }).catch(() => {});
   }, []);
+
+  // 返信・転送時は本文にフォーカス（宛先は入力済みのため）
+  useEffect(() => {
+    if (replyTo || replyAll || forwardFrom) {
+      // DOM描画後にフォーカス
+      const id = setTimeout(() => {
+        if (bodyRef.current) {
+          bodyRef.current.focus();
+          bodyRef.current.setSelectionRange(0, 0);
+          bodyRef.current.scrollTop = 0;
+        }
+      }, 50);
+      return () => clearTimeout(id);
+    }
+  }, [!!replyTo, !!replyAll, !!forwardFrom]);
 
   function handleSignatureChange(sigId: string | null) {
     const sig = sigId ? signatures.find((s) => s.id === sigId) ?? null : null;
@@ -119,8 +261,8 @@ export function ComposeModal() {
     if (toAddresses.length === 0 || !fromAccountId) return;
     setSending(true);
     try {
-      const quotedText = quotedContent
-        ? `\n\n${quotedContent.header}\n${quotedContent.body.split('\n').map((l) => `> ${l}`).join('\n')}`
+      const quotedText = quotedContent && quotedContent.trim() !== ''
+        ? `\n\n${quotedContent}`
         : '';
       const data: ComposeData = {
         accountId: fromAccountId,
@@ -192,12 +334,13 @@ export function ComposeModal() {
             {/* To */}
             <div className="flex items-center px-4 py-2 border-b border-gray-100 dark:border-gray-700">
               <span className="text-xs text-gray-500 w-12 flex-shrink-0">宛先</span>
-              <input
+              <RecipientInput
                 value={to}
-                onChange={(e) => setTo(e.target.value)}
+                onChange={setTo}
+                accountId={fromAccountId}
                 placeholder="メールアドレス"
-                className="flex-1 text-sm bg-transparent outline-none text-gray-700 dark:text-gray-300 placeholder:text-gray-400"
-                autoFocus
+                autoFocus={!replyTo && !replyAll && !forwardFrom}
+                className="text-sm bg-transparent outline-none text-gray-700 dark:text-gray-300 placeholder:text-gray-400"
               />
               <button
                 onClick={() => setShowCcBcc(!showCcBcc)}
@@ -211,20 +354,22 @@ export function ComposeModal() {
               <>
                 <div className="flex items-center px-4 py-2 border-b border-gray-100 dark:border-gray-700">
                   <span className="text-xs text-gray-500 w-12 flex-shrink-0">Cc</span>
-                  <input
+                  <RecipientInput
                     value={cc}
-                    onChange={(e) => setCc(e.target.value)}
+                    onChange={setCc}
+                    accountId={fromAccountId}
                     placeholder="Cc"
-                    className="flex-1 text-sm bg-transparent outline-none text-gray-700 dark:text-gray-300 placeholder:text-gray-400"
+                    className="text-sm bg-transparent outline-none text-gray-700 dark:text-gray-300 placeholder:text-gray-400"
                   />
                 </div>
                 <div className="flex items-center px-4 py-2 border-b border-gray-100 dark:border-gray-700">
                   <span className="text-xs text-gray-500 w-12 flex-shrink-0">Bcc</span>
-                  <input
+                  <RecipientInput
                     value={bcc}
-                    onChange={(e) => setBcc(e.target.value)}
+                    onChange={setBcc}
+                    accountId={fromAccountId}
                     placeholder="Bcc"
-                    className="flex-1 text-sm bg-transparent outline-none text-gray-700 dark:text-gray-300 placeholder:text-gray-400"
+                    className="text-sm bg-transparent outline-none text-gray-700 dark:text-gray-300 placeholder:text-gray-400"
                   />
                 </div>
               </>
@@ -245,13 +390,14 @@ export function ComposeModal() {
           {/* Body */}
           <div className={cn('flex flex-col', expanded && 'flex-1')}>
             <textarea
+              ref={bodyRef}
               value={body}
               onChange={(e) => setBody(e.target.value)}
               placeholder="本文を入力…"
               rows={expanded ? undefined : (quotedContent ? 6 : 12)}
               className={cn('w-full px-4 py-3 text-sm bg-transparent outline-none text-gray-700 dark:text-gray-300 placeholder:text-gray-400 resize-none', expanded && 'flex-1')}
             />
-            {quotedContent && (
+            {quotedContent && quotedContent.trim() !== '' && (
               <div className="px-4 pb-3">
                 <button
                   onClick={() => setShowQuoted((v) => !v)}
@@ -264,9 +410,13 @@ export function ComposeModal() {
                   {showQuoted ? '元のメッセージを隠す' : '元のメッセージを表示'}
                 </button>
                 {showQuoted && (
-                  <div className="max-h-48 overflow-y-auto border-l-2 border-gray-300 dark:border-gray-600 pl-3">
-                    <p className="text-xs text-gray-400 dark:text-gray-500 mb-2 whitespace-pre-wrap">{quotedContent.header}</p>
-                    <p className="text-xs text-gray-500 dark:text-gray-400 whitespace-pre-wrap leading-relaxed">{quotedContent.body}</p>
+                  <div className="rounded-r-md border-l-[3px] border-blue-400 dark:border-blue-500 bg-blue-50/40 dark:bg-blue-900/10 pl-3 pr-2 py-2">
+                    <textarea
+                      value={quotedContent}
+                      onChange={(e) => setQuotedContent(e.target.value)}
+                      rows={Math.min(14, Math.max(3, quotedContent.split('\n').length))}
+                      className="w-full max-h-56 text-xs text-gray-500 dark:text-gray-400 whitespace-pre-wrap leading-relaxed bg-transparent outline-none resize-y"
+                    />
                   </div>
                 )}
               </div>

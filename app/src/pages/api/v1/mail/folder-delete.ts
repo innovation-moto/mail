@@ -12,11 +12,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
   const { account, folderPath } = req.body as RequestBody;
   if (!account || !folderPath) return res.status(400).json({ error: 'account and folderPath are required' });
-  const { password, ...cfg } = account;
+  const { password, oauthAccessToken, ...cfg } = account;
   const client = new ImapFlow({
     host: cfg.imapHost, port: cfg.imapPort, secure: cfg.imapSecure,
-    auth: { user: cfg.email, pass: password }, logger: false,
-    tls: { rejectUnauthorized: false }, connectionTimeout: 30000, socketTimeout: 55000,
+    auth: oauthAccessToken
+      ? { user: cfg.email, accessToken: oauthAccessToken }
+      : { user: cfg.email, pass: password },
+    logger: false,
+    tls: { rejectUnauthorized: false }, connectionTimeout: 15000, socketTimeout: 20000,
   });
   try {
     await client.connect();

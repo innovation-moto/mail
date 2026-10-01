@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -14,10 +14,21 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
+import * as AuthSession from 'expo-auth-session';
+import * as WebBrowser from 'expo-web-browser';
 import { useAccountStore } from '../store/accountStore';
 import { mailApi } from '../lib/api';
 import type { Account, AccountConfig } from '@/shared/types';
 import { PROVIDER_PRESETS } from '@/shared/types';
+
+WebBrowser.maybeCompleteAuthSession();
+
+const MICROSOFT_CLIENT_ID = '263bba99-c8d1-4bfe-a2ae-9a6f9a0e0192';
+const MICROSOFT_SCOPES = [
+  'offline_access', 'openid', 'email', 'profile',
+  'https://outlook.office.com/IMAP.AccessAsUser.All',
+  'https://outlook.office.com/SMTP.Send',
+];
 
 type Provider = 'gmail' | 'outlook' | 'yahoo' | 'custom';
 
@@ -54,6 +65,98 @@ export default function SetupScreen() {
   const [saving, setSaving] = useState(false);
   const [testResult, setTestResult] = useState<{ imap: boolean; smtp: boolean; imapError?: string; smtpError?: string } | null>(null);
 
+  // Microsoft OAuth
+  const msDiscovery = AuthSession.useAutoDiscovery('https://login.microsoftonline.com/consumers/v2.0');
+  const msRedirectUri = AuthSession.makeRedirectUri({ scheme: 'im-mail', path: 'auth' });
+  const [msRequest, msResponse, msPromptAsync] = AuthSession.useAuthRequest(
+    { clientId: MICROSOFT_CLIENT_ID, scopes: MICROSOFT_SCOPES, redirectUri: msRedirectUri },
+    msDiscovery,
+  );
+
+  useEffect(() => {
+    if (!msResponse) return;
+    if (msResponse.type === 'success') {
+      const { code } = msResponse.params;
+      if (!code || !msRequest?.codeVerifier) {
+        Alert.alert('エラー', 'コードまたはverifierが取得できませんでした');
+        return;
+      }
+      handleMicrosoftCode(code, msRequest.codeVerifier);
+    } else if (msResponse.type === 'error') {
+      Alert.alert('認証エラー', msResponse.error?.message ?? JSON.stringify(msResponse));
+    } else if (msResponse.type === 'cancel') {
+      Alert.alert('キャンセル', `認証がキャンセルされました\nredirectUri: ${msRedirectUri}`);
+    }
+  }, [msResponse]);
+
+  async function handleMicrosoftCode(code: string, verifier: string) {
+    setSaving(true);
+    try {
+      const body = new URLSearchParams({
+        client_id: MICROSOFT_CLIENT_ID,
+        grant_type: 'authorization_code',
+        code,
+        redirect_uri: msRedirectUri,
+        code_verifier: verifier,
+        scope: MICROSOFT_SCOPES.join(' '),
+      });
+      const tokenRes = await fetch('https://login.microsoftonline.com/consumers/oauth2/v2.0/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: body.toString(),
+      });
+      if (!tokenRes.ok) {
+        const err = await tokenRes.text();
+        throw new Error(`Token exchange failed: ${err}`);
+      }
+      const tokens = await tokenRes.json() as {
+        access_token: string;
+        refresh_token: string;
+        id_token?: string;
+        expires_in: number;
+      };
+
+      // IDトークンからメールアドレスを取得（base64url対応）
+      let userEmail: string | undefined;
+      if (tokens.id_token) {
+        try {
+          const base64 = tokens.id_token.split('.')[1]
+            .replace(/-/g, '+').replace(/_/g, '/');
+          const padded = base64 + '=='.slice(0, (4 - base64.length % 4) % 4);
+          const payload = JSON.parse(atob(padded));
+          userEmail = payload.email || payload.preferred_username || payload.upn || payload.unique_name;
+        } catch { /* ignore */ }
+      }
+      if (!userEmail) throw new Error('メールアドレスが取得できませんでした');
+
+      const accountId = `${userEmail.replace(/[^a-zA-Z0-9._-]/g, '_')}-${Date.now()}`;
+      const account: Account = {
+        id: accountId,
+        name: name || userEmail,
+        email: userEmail,
+        provider: 'outlook',
+        imapHost: 'outlook.office365.com',
+        imapPort: 993,
+        imapSecure: true,
+        smtpHost: 'smtp.office365.com',
+        smtpPort: 587,
+        smtpSecure: false,
+        oauthAccessToken: tokens.access_token,
+        oauthRefreshToken: tokens.refresh_token,
+        oauthExpiresAt: Date.now() + tokens.expires_in * 1000,
+        createdAt: Date.now(),
+      };
+      await addAccount(account, '__oauth__');
+      Alert.alert('追加完了', `${userEmail} を追加しました`, [
+        { text: 'OK', onPress: () => router.back() },
+      ]);
+    } catch (err) {
+      Alert.alert('Microsoft認証エラー', (err as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
   const selectProvider = (p: Provider) => {
     setProvider(p);
     const preset = PROVIDER_PRESETS[p];
@@ -82,8 +185,12 @@ export default function SetupScreen() {
   });
 
   const handleTest = async () => {
-    if (!email || !password) {
+    if (!email || (!password && provider !== 'outlook')) {
       Alert.alert('エラー', 'メールアドレスとパスワードを入力してください');
+      return;
+    }
+    if (!email) {
+      Alert.alert('エラー', 'メールアドレスを入力してください');
       return;
     }
     setTesting(true);
@@ -189,6 +296,39 @@ export default function SetupScreen() {
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
         <ScrollView style={styles.content} keyboardShouldPersistTaps="handled">
+          {/* Microsoft OAuth button for Outlook */}
+          {provider === 'outlook' && (
+            <>
+              <Text style={styles.sectionLabel}>Microsoftアカウントで接続</Text>
+              <View style={{ paddingHorizontal: 16 }}>
+                <TouchableOpacity
+                  style={styles.microsoftButton}
+                  onPress={() => msPromptAsync()}
+                  disabled={!msRequest || saving}
+                >
+                  {saving ? (
+                    <ActivityIndicator color="#FFFFFF" />
+                  ) : (
+                    <>
+                      <View style={styles.microsoftLogo}>
+                        <View style={[styles.msSquare, { backgroundColor: '#F25022' }]} />
+                        <View style={[styles.msSquare, { backgroundColor: '#7FBA00' }]} />
+                        <View style={[styles.msSquare, { backgroundColor: '#00A4EF' }]} />
+                        <View style={[styles.msSquare, { backgroundColor: '#FFB900' }]} />
+                      </View>
+                      <Text style={styles.microsoftButtonText}>Microsoftでログイン（推奨）</Text>
+                    </>
+                  )}
+                </TouchableOpacity>
+                <View style={styles.dividerRow}>
+                  <View style={styles.dividerLine} />
+                  <Text style={styles.dividerText}>または手動で設定</Text>
+                  <View style={styles.dividerLine} />
+                </View>
+              </View>
+            </>
+          )}
+
           {/* Basic credentials */}
           <Text style={styles.sectionLabel}>基本情報</Text>
           <View style={styles.fieldGroup}>
@@ -525,5 +665,45 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#FFFFFF',
     fontWeight: '600',
+  },
+  microsoftButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#0078D4',
+    borderRadius: 10,
+    padding: 14,
+    gap: 10,
+  },
+  microsoftButtonText: {
+    fontSize: 15,
+    color: '#FFFFFF',
+    fontWeight: '600',
+  },
+  microsoftLogo: {
+    width: 20,
+    height: 20,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 1,
+  },
+  msSquare: {
+    width: 9,
+    height: 9,
+  },
+  dividerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginVertical: 16,
+    gap: 8,
+  },
+  dividerLine: {
+    flex: 1,
+    height: 0.5,
+    backgroundColor: '#C7C7CC',
+  },
+  dividerText: {
+    fontSize: 12,
+    color: '#8E8E93',
   },
 });

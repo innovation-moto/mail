@@ -22,13 +22,15 @@ export default async function handler(
     return res.status(400).json({ error: 'account and compose are required' });
   }
 
-  const { password, ...accountConfig } = account;
+  const { password, oauthAccessToken, ...accountConfig } = account;
 
   const transporter = nodemailer.createTransport({
     host: accountConfig.smtpHost,
     port: accountConfig.smtpPort,
     secure: accountConfig.smtpSecure,
-    auth: { user: accountConfig.email, pass: password },
+    auth: oauthAccessToken
+      ? { type: 'OAuth2' as const, user: accountConfig.email, accessToken: oauthAccessToken }
+      : { user: accountConfig.email, pass: password },
     tls: { rejectUnauthorized: false },
   });
 

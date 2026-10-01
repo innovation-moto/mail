@@ -7,6 +7,7 @@ export interface ParsedEmail {
   from: EmailAddress;
   to: EmailAddress[];
   cc: EmailAddress[];
+  replyToAddress: string; // Reply-To ヘッダーの最初のアドレス
   subject: string;
   bodyText: string;
   bodyHtml: string;
@@ -57,11 +58,15 @@ export async function parseRawEmail(source: Uint8Array | Buffer | string): Promi
       };
     });
 
+  const replyToList = (parsed as any).replyTo ?? [];
+  const replyToAddress = replyToList[0]?.address ?? '';
+
   return {
     messageId: parsed.messageId ?? '',
     from: normalizeAddress(parsed.from),
     to: (parsed.to ?? []).map(normalizeAddress),
     cc: (parsed.cc ?? []).map(normalizeAddress),
+    replyToAddress,
     subject: parsed.subject ?? '(件名なし)',
     bodyText,
     bodyHtml,

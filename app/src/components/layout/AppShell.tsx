@@ -61,6 +61,7 @@ export function AppShell() {
   // mail:synced イベント：バックグラウンド同期完了時に即座に未読数・メール一覧を更新
   useEffect(() => {
     if (!isElectron) return;
+    let lastFolderRefresh = 0;
     const unsubscribe = api.on('mail:synced', (data: unknown) => {
       const { accountId, unreadCounts } = data as { accountId: string; added: number; unreadCounts: Record<string, number> };
       const currentAccountId = useAccountStore.getState().selectedAccountId;
@@ -70,6 +71,12 @@ export function AppShell() {
       // 現在のフォルダのスレッド一覧も静かに更新（選択中スレッドはリセットしない）
       const selectedFolder = useMailStore.getState().selectedFolder;
       loadThreads(accountId, selectedFolder, true).catch(() => {});
+      // 10分に1回フォルダ一覧を再取得（カスタムフォルダの追加を反映）
+      const now = Date.now();
+      if (now - lastFolderRefresh > 10 * 60 * 1000) {
+        lastFolderRefresh = now;
+        loadFolders(accountId).catch(() => {});
+      }
     });
     return () => { unsubscribe?.(); };
   }, []);

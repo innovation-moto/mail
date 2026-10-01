@@ -13,7 +13,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   if (req.method !== 'POST') return res.status(405).end();
 
   const { account, rules } = req.body as {
-    account: { email: string; password: string; imapHost: string; imapPort: number; imapSecure: boolean };
+    account: { email: string; password: string; imapHost: string; imapPort: number; imapSecure: boolean; oauthAccessToken?: string };
     rules: FilterRule[];
   };
   if (!account || !Array.isArray(rules)) return res.status(400).json({ error: 'account and rules required' });
@@ -22,7 +22,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     host: account.imapHost,
     port: account.imapPort,
     secure: account.imapSecure,
-    auth: { user: account.email, pass: account.password },
+    auth: account.oauthAccessToken
+      ? { user: account.email, accessToken: account.oauthAccessToken }
+      : { user: account.email, pass: account.password },
     logger: false,
     tls: { rejectUnauthorized: false },
     connectionTimeout: 15000,

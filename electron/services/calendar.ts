@@ -1,5 +1,6 @@
 import { shell } from 'electron';
 import { CalendarEvent } from '../../shared/types';
+import { getSetting } from '../db/queries/settings';
 
 function toGoogleDate(isoString: string): string {
   // YYYYMMDDTHHmmssZ 形式に変換
@@ -18,6 +19,8 @@ export async function openCalendarEvent(event: CalendarEvent): Promise<void> {
     ...(event.location ? { location: event.location } : {}),
   });
 
-  const url = `https://calendar.google.com/calendar/render?${params.toString()}`;
+  const calendarEmail = getSetting('google_calendar_email');
+  const authuserSuffix = calendarEmail ? `&authuser=${encodeURIComponent(calendarEmail)}` : '';
+  const url = `https://calendar.google.com/calendar/render?${params.toString()}${authuserSuffix}`;
   await shell.openExternal(url);
 }
