@@ -1,16 +1,11 @@
 import { app, BrowserWindow } from 'electron';
 import { safeStorage } from 'electron';
-import fs from 'fs';
-import path from 'path';
 import { listAccounts } from '../db/queries/accounts';
+import { appendLog } from './logFile';
 import { getEncryptedPassword } from '../db/queries/accounts';
 
 function writeLog(msg: string): void {
-  try {
-    const logPath = path.join(app.getPath('userData'), 'sync.log');
-    const line = `${new Date().toISOString()} ${msg}\n`;
-    fs.appendFileSync(logPath, line);
-  } catch {}
+  appendLog('sync.log', `${new Date().toISOString()} ${msg}`);
 }
 import { getUnreadCount, listEmails, getTotalUnreadCount, getDistinctFolders, getThreadUnreadCounts } from '../db/queries/emails';
 import { syncAllFolders, fetchFolders } from './imap';
@@ -124,6 +119,7 @@ export async function syncAllAccounts(win?: BrowserWindow): Promise<void> {
         let totalAdded = 0;
 
         // 1接続で全フォルダを順番に同期（最大3分でタイムアウト）
+        const syncController = new AbortController();
         const syncPromise = syncAllFolders(
           account,
           password,
@@ -151,11 +147,23 @@ export async function syncAllAccounts(win?: BrowserWindow): Promise<void> {
               });
             }
           },
+          syncController.signal,
         );
+        let timeoutHandle: NodeJS.Timeout | null = null;
         const timeoutPromise = new Promise<{ totalAdded: number }>(
-          (_, reject) => setTimeout(() => reject(new Error('sync timeout')), 3 * 60 * 1000),
+          (_, reject) => {
+            timeoutHandle = setTimeout(() => {
+              syncController.abort();
+              reject(new Error('sync timeout'));
+            }, 3 * 60 * 1000);
+          },
         );
-        const { totalAdded: added } = await Promise.race([syncPromise, timeoutPromise]);
+        let added: number;
+        try {
+          ({ totalAdded: added } = await Promise.race([syncPromise, timeoutPromise]));
+        } finally {
+          if (timeoutHandle) clearTimeout(timeoutHandle);
+        }
         totalAdded = added;
 
         // 全フォルダ完了後に最終の未読数・バッジを更新

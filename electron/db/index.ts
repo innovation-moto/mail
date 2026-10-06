@@ -66,10 +66,16 @@ export function getDb(): Database.Database {
         account_id TEXT NOT NULL,
         folder TEXT NOT NULL,
         last_uid INTEGER NOT NULL DEFAULT 0,
+        uid_validity TEXT,
         PRIMARY KEY (account_id, folder),
         FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE
       )`);
     } catch {}
+    try {
+      db.exec('ALTER TABLE folder_sync_state ADD COLUMN uid_validity TEXT');
+    } catch {
+      // カラムが既に存在する場合は無視
+    }
 
     // マイグレーション: ゴミ箱・迷惑メール内の未読メールを既読にする（Gmailと同じ挙動）
     db.exec(`

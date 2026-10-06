@@ -123,6 +123,7 @@ CREATE TABLE IF NOT EXISTS folder_sync_state (
   account_id TEXT NOT NULL,
   folder TEXT NOT NULL,
   last_uid INTEGER NOT NULL DEFAULT 0,
+  uid_validity TEXT,
   PRIMARY KEY (account_id, folder),
   FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE
 );

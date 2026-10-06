@@ -1,6 +1,5 @@
-import { Notification, app } from 'electron';
-import fs from 'fs';
-import path from 'path';
+import { Notification } from 'electron';
+import { appendLog } from './logFile';
 
 // GC防止のため最近の通知オブジェクトを保持
 const activeNotifications: Notification[] = [];
@@ -32,10 +31,7 @@ function alreadyNotified(key: string): boolean {
 }
 
 function writeNotifLog(msg: string): void {
-  try {
-    const logPath = path.join(app.getPath('userData'), 'notification.log');
-    fs.appendFileSync(logPath, `${new Date().toISOString()} ${msg}\n`);
-  } catch {}
+  appendLog('notification.log', `${new Date().toISOString()} ${msg}`);
 }
 
 export function showNewMailNotification(

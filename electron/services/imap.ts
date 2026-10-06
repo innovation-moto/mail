@@ -1,12 +1,13 @@
 import { ImapFlow, MailboxLockObject } from 'imapflow';
 import { Account, Folder } from '../../shared/types';
 import { parseRawEmail, ParsedEmail } from './parser';
-import { upsertEmail, UpsertEmailData, getMaxUid, getFolderLastUid, setFolderLastUid, getMinUidForFolder, getEmailUidsForFolder, getAllEmailUidsForFolder, getAllEmailUidsWithFlagsForFolder, getCustomFolderEmailUids, updateEmailFlags, saveAttachments, moveEmail, listEmails } from '../db/queries/emails';
+import { upsertEmail, UpsertEmailData, getMaxUid, getFolderLastUid, setFolderLastUid, getFolderUidValidity, getFetchedUidsForSourceFolder, getEmailUidsForFolder, getAllEmailUidsWithFlagsForFolder, updateEmailFlags, applyFolderReconciliation, saveAttachments, moveEmail, listEmails } from '../db/queries/emails';
 import { generateThreadId } from '../utils/thread';
 import { isBlocked } from '../db/queries/blocklist';
 import { applyFilters } from '../db/queries/filters';
 import { refreshMicrosoftToken, buildXOAuth2Token } from './microsoftAuth';
 import { updateAccount } from '../db/queries/accounts';
+import { assessUidValidity, reconcileFolderSnapshot } from './folderReconciliation';
 
 async function getValidAccessToken(account: Account): Promise<string> {
   const a = account as Account & { oauthAccessToken?: string; oauthRefreshToken?: string; oauthExpiresAt?: number };
@@ -23,16 +24,10 @@ async function getValidAccessToken(account: Account): Promise<string> {
   return tokens.accessToken;
 }
 
-import fs from 'fs';
-import path from 'path';
-import { app } from 'electron';
+import { appendLog } from './logFile';
 
 function imapLog(account: string, entry: any): void {
-  try {
-    const logPath = path.join(app.getPath('userData'), 'imap.log');
-    const line = `${new Date().toISOString()} [${account}] ${JSON.stringify(entry)}\n`;
-    fs.appendFileSync(logPath, line);
-  } catch {}
+  appendLog('imap.log', `${new Date().toISOString()} [${account}] ${JSON.stringify(entry)}`);
 }
 
 function createClient(account: Account, password: string): ImapFlow {
@@ -46,7 +41,8 @@ function createClient(account: Account, password: string): ImapFlow {
     secure: account.imapSecure,
     auth,
     logger: {
-      debug: (entry: any) => imapLog(account.email, { level: 'debug', ...entry }),
+      // debug は IMAP の送受信コマンド全文（メールヘッダー等を含む）で肥大化するため記録しない
+      debug: () => {},
       info: (entry: any) => imapLog(account.email, { level: 'info', ...entry }),
       warn: (entry: any) => imapLog(account.email, { level: 'warn', ...entry }),
       error: (entry: any) => imapLog(account.email, { level: 'error', ...entry }),
@@ -85,6 +81,72 @@ async function safeLogout(client: ImapFlow): Promise<void> {
   } catch {
     try { client.close(); } catch {}
   }
+}
+
+function throwIfSyncAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) throw new Error('sync aborted');
+}
+
+function getMailboxUidValidity(client: ImapFlow): string {
+  if (!client.mailbox) throw new Error('mailbox is not selected');
+  return client.mailbox.uidValidity.toString();
+}
+
+/**
+ * Establishes UIDVALIDITY before interpreting cached UIDs. Existing databases
+ * need one non-destructive baseline pass after this feature is introduced.
+ */
+function prepareFolderUidValidity(accountId: string, folder: string, currentUidValidity: string): boolean {
+  const previousUidValidity = getFolderUidValidity(accountId, folder);
+  const existing = getAllEmailUidsWithFlagsForFolder(accountId, folder);
+  const status = assessUidValidity(previousUidValidity, currentUidValidity, existing.length > 0);
+  if (status === 'uid-validity-changed') {
+    throw new Error(`UIDVALIDITY changed for ${folder}; folder cache rebuild required`);
+  }
+  if (status === 'baseline-needed') {
+    applyFolderReconciliation(accountId, folder, {
+      flagUpdates: [], removals: [], uidValidity: currentUidValidity,
+    });
+    console.log(`[sync] ${folder}: recorded UIDVALIDITY baseline; reconciliation deferred`);
+    return false;
+  }
+  return true;
+}
+
+async function reconcileSelectedFolder(
+  client: ImapFlow,
+  accountId: string,
+  folder: string,
+  signal?: AbortSignal,
+): Promise<{ updated: number; removed: number }> {
+  const currentUidValidity = getMailboxUidValidity(client);
+  const previousUidValidity = getFolderUidValidity(accountId, folder);
+  const entries = getAllEmailUidsWithFlagsForFolder(accountId, folder);
+  const result = await reconcileFolderSnapshot({
+    accountId,
+    folder,
+    previousUidValidity,
+    currentUidValidity,
+    entries,
+    signal,
+    fetchFlagsBatch: async (uids) => {
+      const flags: Array<{ uid: number; isRead: boolean; isStarred: boolean }> = [];
+      if (uids.length === 0) return flags;
+      for await (const msg of client.fetch(uids.join(','), { uid: true, flags: true }, { uid: true })) {
+        flags.push({
+          uid: msg.uid,
+          isRead: msg.flags?.has('\\Seen') ?? false,
+          isStarred: msg.flags?.has('\\Flagged') ?? false,
+        });
+      }
+      return flags;
+    },
+    commit: (plan) => applyFolderReconciliation(accountId, folder, plan),
+  });
+  if (result.status === 'uid-validity-changed') {
+    throw new Error(`UIDVALIDITY changed for ${folder}; folder cache rebuild required`);
+  }
+  return { updated: result.updated, removed: result.removed };
 }
 
 export async function testImapConnection(
@@ -149,6 +211,7 @@ export async function syncFolder(
   password: string,
   folder = 'INBOX',
   limit = 50,
+  signal?: AbortSignal,
 ): Promise<{ added: number; blocked: number }> {
   const client = createClient(account, password);
   let lock: MailboxLockObject | null = null;
@@ -159,8 +222,15 @@ export async function syncFolder(
     await client.connect();
     lock = await client.getMailboxLock(folder);
     const mailbox = client.mailbox;
-    if (!mailbox || mailbox.exists === 0) {
+    if (!mailbox) throw new Error(`mailbox not found: ${folder}`);
+    throwIfSyncAborted(signal);
+    if (!prepareFolderUidValidity(account.id, folder, getMailboxUidValidity(client))) {
+      return { added, blocked };
+    }
+    if (mailbox.exists === 0) {
+      const reconciled = await reconcileSelectedFolder(client, account.id, folder, signal);
       console.log(`[sync] ${folder}: empty mailbox`);
+      console.log(`[sync] ${folder}: reconciled updated=${reconciled.updated} removed=${reconciled.removed}`);
       return { added, blocked };
     }
 
@@ -192,6 +262,7 @@ export async function syncFolder(
       { uid: true, flags: true, source: true },
       fetchOpts,
     )) {
+      throwIfSyncAborted(signal);
       if (!msg.source) continue;
       if (count >= limit) break;
       count++;
@@ -271,6 +342,9 @@ export async function syncFolder(
 
       added++;
     }
+
+    const reconciled = await reconcileSelectedFolder(client, account.id, folder, signal);
+    console.log(`[sync] ${folder}: reconciled updated=${reconciled.updated} removed=${reconciled.removed}`);
 
     console.log(`[sync] ${folder}: done added=${added} blocked=${blocked} processed=${count}`);
   } finally {
@@ -353,6 +427,7 @@ export async function syncAllFolders(
   folders: string[],
   limit = 50,
   onFolderDone?: (folder: string, added: number, unreadAdded: number) => void,
+  signal?: AbortSignal,
 ): Promise<{ totalAdded: number }> {
   const client = await createClientWithRefresh(account, password);
   let totalAdded = 0;
@@ -361,13 +436,21 @@ export async function syncAllFolders(
     await client.connect();
 
     for (const folder of folders) {
+      throwIfSyncAborted(signal);
       let lock: MailboxLockObject | null = null;
       try {
         lock = await client.getMailboxLock(folder);
         const mailbox = client.mailbox;
-        if (!mailbox || mailbox.exists === 0) {
-          lock.release();
-          lock = null;
+        if (!mailbox) throw new Error(`mailbox not found: ${folder}`);
+        throwIfSyncAborted(signal);
+        if (!prepareFolderUidValidity(account.id, folder, getMailboxUidValidity(client))) {
+          onFolderDone?.(folder, 0, 0);
+          continue;
+        }
+        if (mailbox.exists === 0) {
+          const reconciled = await reconcileSelectedFolder(client, account.id, folder, signal);
+          console.log(`[sync] ${folder}: empty; reconciled removed=${reconciled.removed}`);
+          onFolderDone?.(folder, 0, 0);
           continue;
         }
 
@@ -399,6 +482,7 @@ export async function syncAllFolders(
 
         // --- 新着メール取得 ---
         for await (const msg of client.fetch(fetchRange, { uid: true, flags: true, source: true }, fetchOpts)) {
+          throwIfSyncAborted(signal);
           if (!msg.source) continue;
           if (count >= limit) break;
           count++;
@@ -452,7 +536,9 @@ export async function syncAllFolders(
         }
 
         // --- フェッチ完了後にIMAPサーバー移動をまとめて実行 ---
+        throwIfSyncAborted(signal);
         for (const { uid, toFolder } of pendingMoves) {
+          throwIfSyncAborted(signal);
           try {
             await client.messageMove({ uid }, toFolder, { uid: true });
             console.log(`[filter] moved uid=${uid} → ${toFolder}`);
@@ -461,46 +547,23 @@ export async function syncAllFolders(
           }
         }
 
-        // --- フラグ同期（全件・上限なし）---
-        const existing = getAllEmailUidsWithFlagsForFolder(account.id, folder);
-        if (existing.length > 0) {
-          const uidMap = new Map(existing.map((e) => [e.uid, e]));
-          const foundUids = new Set<number>();
-          // IMAPのUID範囲指定は長すぎると失敗するので100件ずつバッチ処理
-          const BATCH = 100;
-          for (let i = 0; i < existing.length; i += BATCH) {
-            const batch = existing.slice(i, i + BATCH);
-            const uidRange = batch.map((e) => e.uid).join(',');
-            for await (const msg of client.fetch(uidRange, { uid: true, flags: true }, { uid: true })) {
-              foundUids.add(msg.uid);
-              const entry = uidMap.get(msg.uid);
-              if (!entry) continue;
-              const isReadOnImap = msg.flags?.has('\\Seen') ?? false;
-              const isStarred = msg.flags?.has('\\Flagged') ?? false;
-              // IMAPのフラグを正として双方向同期（Gmail Web等での未読戻しも反映）
-              const newIsRead = isReadOnImap;
-              if (newIsRead !== entry.isRead || isStarred !== entry.isStarred) updateEmailFlags(entry.id, newIsRead, isStarred);
-            }
-          }
-          // サーバー上に存在しないUID（UIDが変わった・削除済み）は既読にする
-          for (const entry of existing) {
-            if (!foundUids.has(entry.uid) && !entry.isRead) {
-              updateEmailFlags(entry.id, true, entry.isStarred);
-            }
-          }
-        }
+        // --- フラグとフォルダ所属を、全UIDバッチ成功後に一括反映 ---
+        const reconciled = await reconcileSelectedFolder(client, account.id, folder, signal);
+        console.log(`[sync] ${folder}: reconciled updated=${reconciled.updated} removed=${reconciled.removed}`);
 
         // --- バックフィル: サーバー上にあってDBに未登録のメールを取得 ---
         // lastKnownUid > 0 の場合はインクリメンタル同期で十分なためスキップ（全UID取得は高コスト）
         if (lastKnownUid === 0) try {
-          const dbUids = getAllEmailUidsForFolder(account.id, folder);
-          // 他フォルダに振り分け済みのUID（バックフィルで上書きしない）
-          const otherFolderUids = getCustomFolderEmailUids(account.id);
+          throwIfSyncAborted(signal);
+          // このフォルダから取得済みのUID（フィルター移動済みも含む）。
+          // 他フォルダのUIDで除外すると、UID空間が別なのに番号が重なるだけで取りこぼす
+          const fetchedUids = getFetchedUidsForSourceFolder(account.id, folder);
           const serverUids: number[] = [];
           for await (const msg of client.fetch('1:*', { uid: true }, { uid: true })) {
+            throwIfSyncAborted(signal);
             serverUids.push(msg.uid);
           }
-          const missingUids = serverUids.filter((uid) => !dbUids.has(uid) && !otherFolderUids.has(uid));
+          const missingUids = serverUids.filter((uid) => !fetchedUids.has(uid));
           if (missingUids.length > 0) {
             console.log(`[sync] ${folder}: backfill ${missingUids.length} missing emails`);
             const BATCH = 10;
@@ -508,6 +571,7 @@ export async function syncAllFolders(
               const batch = missingUids.slice(i, i + BATCH);
               const range = batch.join(',');
               for await (const msg of client.fetch(range, { uid: true, flags: true, source: true }, { uid: true })) {
+                throwIfSyncAborted(signal);
                 if (!msg.source) continue;
                 let parsed: ParsedEmail;
                 try { parsed = await parseRawEmail(msg.source); } catch { continue; }
@@ -535,11 +599,13 @@ export async function syncAllFolders(
         totalAdded += added;
         onFolderDone?.(folder, added, unreadAdded);
       } catch (e) {
+        if (signal?.aborted) throw e;
         console.error(`[sync] folder=${folder} error:`, (e as Error).message);
       } finally {
         lock?.release();
       }
     }
+    throwIfSyncAborted(signal);
   } finally {
     await safeLogout(client);
   }
@@ -568,35 +634,29 @@ export async function syncFolderOlderEmails(
     const mailbox = client.mailbox;
     if (!mailbox || mailbox.exists === 0) return 0;
 
-    // DB にある「このフォルダから取得済み」の最小 UID を調べる
-    const minUid = getMinUidForFolder(account.id, folder);
-    if (minUid <= 1) {
-      // UID=1 以下ならこれ以上古いものはない
-      return 0;
+    // サーバー上にあってまだ取得していないUIDを新しい順に limit 件取得する。
+    // 「最小UIDより古いもの」だけを見ると、途中の歯抜け（過去の同期で取りこぼした分）を拾えない
+    const fetchedUids = getFetchedUidsForSourceFolder(account.id, folder);
+    const missingUids: number[] = [];
+    for await (const msg of client.fetch('1:*', { uid: true }, { uid: true })) {
+      if (!fetchedUids.has(msg.uid)) missingUids.push(msg.uid);
     }
+    if (missingUids.length === 0) return 0;
 
-    // minUid より前のシーケンス範囲をサーバーから取得（古い順に limit 件）
-    // UID 1 〜 minUid-1 の範囲を fetch
-    const fetchRange = `1:${minUid - 1}`;
-    const allOldUids: number[] = [];
-    for await (const msg of client.fetch(fetchRange, { uid: true }, { uid: true })) {
-      allOldUids.push(msg.uid);
-    }
-    if (allOldUids.length === 0) return 0;
-
-    // 新しいものから limit 件に絞る（降順ソートして先頭 limit 件）
-    const targetUids = allOldUids.sort((a, b) => b - a).slice(0, limit);
+    const targetUids = missingUids.sort((a, b) => b - a).slice(0, limit);
     const uidRange = targetUids.join(',');
-
-    const dbUids = getAllEmailUidsForFolder(account.id, folder);
 
     for await (const msg of client.fetch(uidRange, { uid: true, flags: true, source: true }, { uid: true })) {
       if (!msg.source) continue;
-      if (dbUids.has(msg.uid)) continue; // 既存
+      if (fetchedUids.has(msg.uid)) continue; // 既存
 
       let parsed: ParsedEmail;
       try { parsed = await parseRawEmail(msg.source); } catch { continue; }
-      if (isBlocked(account.id, parsed.from.address)) continue;
+      if (isBlocked(account.id, parsed.from.address)) {
+        // 通常同期と同じくゴミ箱扱いで記録する（記録しないと毎回取り直して先へ進めない）
+        upsertEmail({ id: `${account.id}-${msg.uid}-${folder}`, accountId: account.id, uid: msg.uid, messageId: parsed.messageId, folder: 'Trash', from: parsed.from, to: parsed.to, cc: parsed.cc, replyToAddress: parsed.replyToAddress, subject: parsed.subject, bodyText: parsed.bodyText, bodyHtml: parsed.bodyHtml, date: parsed.date, isRead: true, hasAttachments: parsed.hasAttachments, threadId: generateThreadId(account.id, parsed.subject, parsed.messageId) });
+        continue;
+      }
 
       const filterResult = applyFilters(account.id, {
         from: parsed.from.address,

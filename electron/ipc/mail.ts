@@ -67,6 +67,38 @@ function getPassword(accountId: string): string {
   return safeStorage.decryptString(enc);
 }
 
+// 仮想フォルダ名 → 実IMAPフォルダ名の判定パターンと specialUse
+const VIRTUAL_FOLDERS: Record<string, { re: RegExp; specialUse?: string }> = {
+  Sent:    { re: /Sent|送信済み/i, specialUse: '\\Sent' },
+  Drafts:  { re: /Draft|下書き/i, specialUse: '\\Drafts' },
+  Trash:   { re: /Trash|ゴミ箱|Deleted Items/i },
+  Starred: { re: /スター|Starred|Flagged/i },
+  Spam:    { re: /Spam|Junk|迷惑/i, specialUse: '\\Junk' },
+};
+
+// 仮想フォルダ名を実際のIMAPフォルダパスに解決（解決できなければ元の名前を返す）
+async function resolveImapFolder(
+  account: NonNullable<ReturnType<typeof getAccount>>,
+  password: string,
+  folder: string,
+): Promise<string> {
+  const def = VIRTUAL_FOLDERS[folder];
+  if (!def) return folder;
+  const fromDb = getDistinctFolders(account.id).find((f) => def.re.test(f) && f !== folder);
+  if (fromDb) return fromDb;
+  if (folder === 'Starred') return 'INBOX';
+  if (!def.specialUse) return folder;
+  // まだ一度も同期されていない場合、DBに実パスが無いのでIMAPから直接探す
+  try {
+    const serverFolders = await fetchFolders(account, password);
+    const hit = serverFolders.find((f) => f.specialUse === def.specialUse)
+      ?? serverFolders.find((f) => def.re.test(f.path));
+    return hit?.path ?? folder;
+  } catch {
+    return folder;
+  }
+}
+
 export function registerMailHandlers(): void {
   ipcMain.handle('mail:fetchFolders', async (_e, accountId: string) => {
     const account = getAccount(accountId);
@@ -90,53 +122,20 @@ export function registerMailHandlers(): void {
     const password = getPassword(accountId);
     applyBlocklistToExistingEmails(accountId);
 
-    // 仮想フォルダ名を実際のIMAPフォルダパスに解決
-    let imapFolder = folder;
-    const VIRTUAL_FOLDERS: Record<string, RegExp> = {
-      Sent:   /Sent|送信済み/i,
-      Drafts: /Draft|下書き/i,
-      Trash:  /Trash|ゴミ箱|Deleted Items/i,
-      Starred: /スター|Starred|Flagged/i,
-      Spam:   /Spam|Junk|迷惑/i,
-    };
-    if (folder in VIRTUAL_FOLDERS) {
-      const known = getDistinctFolders(accountId);
-      const re = VIRTUAL_FOLDERS[folder];
-      const fromDb = known.find((f) => re.test(f) && f !== folder);
-      if (fromDb) {
-        imapFolder = fromDb;
-      } else if (folder === 'Starred') {
-        imapFolder = 'INBOX';
-      } else if (folder === 'Spam') {
-        // まだ一度も同期されていない場合、DBに実パスが無いのでIMAPから直接探す
-        try {
-          const serverFolders = await fetchFolders(account, password);
-          const spamFolder = serverFolders.find((f) =>
-            f.specialUse === '\\Junk' ||
-            f.path.toLowerCase().includes('spam') ||
-            f.path.toLowerCase().includes('junk') ||
-            f.path.includes('迷惑'),
-          );
-          imapFolder = spamFolder?.path ?? folder;
-        } catch {
-          imapFolder = folder;
-        }
-      } else {
-        imapFolder = folder;
-      }
-    }
-
+    const imapFolder = await resolveImapFolder(account, password, folder);
     return syncFolder(account, password, imapFolder);
   });
 
   ipcMain.handle('mail:backfillOlderEmails', async (_e, accountId: string, folder: string, limit = 50) => {
     const account = getAccount(accountId);
     if (!account) throw new Error('アカウントが見つかりません');
-    // 仮想フォルダはバックフィル対象外
-    const VIRTUAL = new Set(['Starred', 'Sent', 'Drafts', 'Trash', 'Spam']);
-    if (VIRTUAL.has(folder)) return 0;
+    // スター（INBOX横断）とゴミ箱（ローカル削除と混在）はバックフィル対象外
+    if (folder === 'Starred' || folder === 'Trash') return 0;
     const password = getPassword(accountId);
-    return syncFolderOlderEmails(account, password, folder, limit);
+    // 送信済み・下書き・迷惑メールは実IMAPパスに解決してから古いメールを取得
+    const imapFolder = await resolveImapFolder(account, password, folder);
+    if (imapFolder === folder && folder in VIRTUAL_FOLDERS) return 0; // 実パス解決失敗
+    return syncFolderOlderEmails(account, password, imapFolder, limit);
   });
 
   ipcMain.handle('mail:send', async (_e, data: ComposeData) => {

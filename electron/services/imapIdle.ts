@@ -1,18 +1,14 @@
 import { ImapFlow } from 'imapflow';
 import type { Account } from '../../shared/types';
 import { BrowserWindow, app } from 'electron';
-import fs from 'fs';
-import path from 'path';
 import { syncAllFolders } from './imap';
 import { getAllFolderUnreadCounts, getTotalUnreadCount, getUnreadCount, listEmails } from '../db/queries/emails';
 import { showNewMailNotification } from './notification';
+import { appendLog } from './logFile';
 import { getAllSettings } from '../db/queries/settings';
 
 function writeIdleLog(msg: string): void {
-  try {
-    const logPath = path.join(app.getPath('userData'), 'idle.log');
-    fs.appendFileSync(logPath, `${new Date().toISOString()} ${msg}\n`);
-  } catch {}
+  appendLog('idle.log', `${new Date().toISOString()} ${msg}`);
 }
 
 interface IdleState {

@@ -7,6 +7,24 @@ import { useAccountStore } from '@/store/accountStore';
 // 削除APIが完了するまで復活させないためのセット
 const pendingDeletes = new Set<string>();
 
+// スレッドにまとめず個別メールとして一覧表示するフォルダ
+const INDIVIDUAL_FOLDERS = new Set(['Sent', 'Drafts', 'Trash']);
+
+function emailToThreadSummary(e: Email): ThreadSummary {
+  return {
+    threadId: e.id,
+    subject: e.subject,
+    latestFrom: e.from,
+    latestDate: e.date,
+    emailCount: 1,
+    unreadCount: e.isRead ? 0 : 1,
+    hasAttachments: e.hasAttachments,
+    latestEmailId: e.id,
+    aiPriority: e.aiPriority ?? null,
+    folder: e.folder,
+  };
+}
+
 interface MailState {
   emails: Email[];
   selectedEmailId: string | null;
@@ -36,6 +54,7 @@ interface MailState {
   loadingMoreThreads: boolean;
   hasMoreThreads: boolean;
   backfillingOlderEmails: boolean;
+  backfillStatus: 'idle' | 'exhausted' | 'error'; // 「さらに読み込む」の結果表示用
 
   loadFolders: (accountId: string) => Promise<void>;
   loadEmails: (accountId: string, folder?: string) => Promise<void>;
@@ -87,6 +106,7 @@ export const useMailStore = create<MailState>((set, get) => ({
   loadingMoreThreads: false,
   hasMoreThreads: true,
   backfillingOlderEmails: false,
+  backfillStatus: 'idle',
 
   selectedEmail: () => {
     const { emails, selectedEmailId, searchResults, threadEmails } = get();
@@ -168,36 +188,30 @@ export const useMailStore = create<MailState>((set, get) => ({
   loadThreads: async (accountId, folder, silent = false) => {
     const f = folder ?? get().selectedFolder;
     if (!silent) {
-      set({ loading: true, error: null, hasMoreThreads: true, threads: [], selectedThreadId: null, threadEmails: [] });
+      set({ loading: true, error: null, hasMoreThreads: true, backfillStatus: 'idle', threads: [], selectedThreadId: null, threadEmails: [] });
     }
+    // サイレント更新（30秒ポーリング・同期完了）では、スクロールで読み込み済みの件数を維持する。
+    // 先頭50件に切り詰めると、過去メールを見ている最中に一覧が縮んで先頭へ戻されてしまう。
+    const limit = silent ? Math.max(50, get().threads.length) : 50;
     try {
       // 送信済み・下書き・ゴミ箱は個別メール表示（スレッドグループ化しない）
-      if (f === 'Sent' || f === 'Drafts' || f === 'Trash') {
-        const emails = await api.mail.fetchEmails(accountId, f, 50, 0);
-        const threads: ThreadSummary[] = (emails as Email[]).map((e: Email) => ({
-          threadId: e.id,
-          subject: e.subject,
-          latestFrom: e.from,
-          latestDate: e.date,
-          emailCount: 1,
-          unreadCount: e.isRead ? 0 : 1,
-          hasAttachments: e.hasAttachments,
-          latestEmailId: e.id,
-          aiPriority: e.aiPriority ?? null,
-          folder: e.folder,
-        }));
+      if (INDIVIDUAL_FOLDERS.has(f)) {
+        const emails = await api.mail.fetchEmails(accountId, f, limit, 0);
+        const threads = (emails as Email[]).map(emailToThreadSummary);
         if (silent) {
-          set({ threads, hasMoreThreads: emails.length === 50 });
+          if (get().selectedFolder !== f) return;
+          set({ threads }); // 読み込み済み件数を維持するので hasMoreThreads は変えない
         } else {
           set({ threads, loading: false, selectedFolder: f, hasMoreThreads: emails.length === 50 });
         }
         return;
       }
 
-      const raw = await api.mail.fetchThreads(accountId, f, 50, 0);
+      const raw = await api.mail.fetchThreads(accountId, f, limit, 0);
       const threads = raw.filter((t) => !pendingDeletes.has(t.threadId));
       if (silent) {
-        set({ threads, hasMoreThreads: raw.length === 50 });
+        if (get().selectedFolder !== f) return;
+        set({ threads }); // 読み込み済み件数を維持するので hasMoreThreads は変えない
       } else {
         set({ threads, loading: false, selectedFolder: f, hasMoreThreads: raw.length === 50 });
         const counts = await api.mail.getThreadUnreadCounts(accountId);
@@ -214,11 +228,18 @@ export const useMailStore = create<MailState>((set, get) => ({
     const { threads, selectedFolder, loadingMoreThreads, hasMoreThreads, backfillingOlderEmails } = get();
     if (loadingMoreThreads || backfillingOlderEmails) return;
 
+    const individual = INDIVIDUAL_FOLDERS.has(selectedFolder);
+    // 送信済み・下書き・ゴミ箱は loadThreads と同じ個別メール形式で追加取得する
+    const fetchPage = async (offset: number): Promise<ThreadSummary[]> =>
+      individual
+        ? ((await api.mail.fetchEmails(accountId, selectedFolder, 50, offset)) as Email[]).map(emailToThreadSummary)
+        : api.mail.fetchThreads(accountId, selectedFolder, 50, offset);
+
     if (hasMoreThreads) {
       // まずローカル DB から追加取得
       set({ loadingMoreThreads: true });
       try {
-        const more = await api.mail.fetchThreads(accountId, selectedFolder, 50, threads.length);
+        const more = await fetchPage(threads.length);
         // threadId で重複排除（件名ベースのグループ化＋OFFSETページングで重複しうる）
         const seen = new Set(threads.map((t) => t.threadId));
         const fresh = more.filter((t) => !seen.has(t.threadId) && !pendingDeletes.has(t.threadId));
@@ -234,23 +255,35 @@ export const useMailStore = create<MailState>((set, get) => ({
       return;
     }
 
-    // DB が尽きた → IMAP から古いメールをバックフィル
-    const VIRTUAL = new Set(['Starred', 'Sent', 'Drafts', 'Trash', 'Spam']);
-    if (VIRTUAL.has(selectedFolder)) return;
+    // DB が尽きた → IMAP から未取得のメールをバックフィル
+    // スター・ゴミ箱は対象外（送信済み・下書き・迷惑メールは main 側で実フォルダに解決してバックフィル）
+    if (selectedFolder === 'Starred' || selectedFolder === 'Trash') {
+      set({ backfillStatus: 'exhausted' });
+      return;
+    }
 
-    set({ backfillingOlderEmails: true });
+    set({ backfillingOlderEmails: true, backfillStatus: 'idle' });
     try {
       const added = await api.mail.backfillOlderEmails(accountId, selectedFolder, 50);
       if (added > 0) {
-        // バックフィルで追加されたので DB から再取得（threadId で重複排除）
-        const more = await api.mail.fetchThreads(accountId, selectedFolder, 50, threads.length);
-        const seen = new Set(threads.map((t) => t.threadId));
-        const fresh = more.filter((t) => !seen.has(t.threadId) && !pendingDeletes.has(t.threadId));
-        set({ threads: [...threads, ...fresh], hasMoreThreads: more.length === 50 && fresh.length > 0 });
+        // 取りこぼし分は一覧の途中（既存スレッドへの合流を含む）に入るため、末尾追加ではなく
+        // 読み込み済み件数＋50件を先頭から取り直す
+        const limit = threads.length + 50;
+        const reloaded = individual
+          ? ((await api.mail.fetchEmails(accountId, selectedFolder, limit, 0)) as Email[]).map(emailToThreadSummary)
+          : await api.mail.fetchThreads(accountId, selectedFolder, limit, 0);
+        if (get().selectedFolder !== selectedFolder) return;
+        set({
+          threads: reloaded.filter((t) => !pendingDeletes.has(t.threadId)),
+          hasMoreThreads: reloaded.length === limit,
+        });
+      } else {
+        // サーバーにも未取得のメールが無い
+        set({ backfillStatus: 'exhausted' });
       }
-      // added === 0 ならサーバーにも古いメールがないので終端
-    } catch {
-      // バックフィル失敗は無視（ネットワーク不達等）
+    } catch (err) {
+      console.error('[backfill] failed:', (err as Error).message);
+      set({ backfillStatus: 'error' });
     } finally {
       set({ backfillingOlderEmails: false });
     }

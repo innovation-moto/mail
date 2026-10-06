@@ -1,4 +1,5 @@
 import nodemailer from 'nodemailer';
+import dns from 'dns';
 import { Account, ComposeData, TestConnectionResult } from '../../shared/types';
 import { refreshMicrosoftToken } from './microsoftAuth';
 import { updateAccount } from '../db/queries/accounts';
@@ -21,6 +22,19 @@ async function getSmtpAuth(account: Account, password: string) {
   return { user: account.email, pass: password };
 }
 
+// SMTP ホストを IPv4 で解決する。nodemailer は IPv4 の DNS 問い合わせが一時失敗すると
+// IPv6 アドレスへフォールバックし（しかも数分キャッシュする）、IPv6 経路の無いネットワークで
+// EHOSTUNREACH になるため、OS のリゾルバで IPv4 を先に確定させる。
+// 解決できなければホスト名のまま返し、nodemailer の既定動作に任せる。
+async function resolveSmtpHost(host: string): Promise<{ host: string; servername: string }> {
+  try {
+    const { address } = await dns.promises.lookup(host, { family: 4 });
+    return { host: address, servername: host };
+  } catch {
+    return { host, servername: host };
+  }
+}
+
 export async function testSmtpConnection(
   host: string,
   port: number,
@@ -28,12 +42,13 @@ export async function testSmtpConnection(
   email: string,
   password: string,
 ): Promise<{ ok: boolean; error?: string }> {
+  const resolved = await resolveSmtpHost(host);
   const transporter = nodemailer.createTransport({
-    host,
+    host: resolved.host,
     port,
     secure,
     auth: { user: email, pass: password },
-    tls: { rejectUnauthorized: false },
+    tls: { rejectUnauthorized: false, servername: resolved.servername },
   });
   try {
     await transporter.verify();
@@ -47,12 +62,13 @@ export async function testSmtpConnection(
 
 export async function sendEmail(account: Account, password: string, data: ComposeData): Promise<void> {
   const auth = await getSmtpAuth(account, password);
+  const resolved = await resolveSmtpHost(account.smtpHost);
   const transporter = nodemailer.createTransport({
-    host: account.smtpHost,
+    host: resolved.host,
     port: account.smtpPort,
     secure: account.smtpSecure,
     auth,
-    tls: { rejectUnauthorized: false },
+    tls: { rejectUnauthorized: false, servername: resolved.servername },
   });
 
   if (!data.to || data.to.length === 0) {

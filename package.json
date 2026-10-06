@@ -11,6 +11,7 @@
     "build": "npm run build:next && npm run build:electron",
     "build:next": "cd app && node_modules/.bin/next build",
     "build:electron": "tsc -p tsconfig.electron.json",
+    "test:reconciliation": "npm run build:electron && node --test tests/folderReconciliation.test.cjs",
     "package": "npm run build && cross-env APPLE_KEYCHAIN_PROFILE=AC_PASSWORD electron-builder",
     "postinstall": "electron-builder install-app-deps"
   },

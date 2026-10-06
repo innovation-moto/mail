@@ -421,14 +421,18 @@ export function getDistinctFolders(accountId: string): string[] {
   return rows.map((r) => r.folder);
 }
 
-export function getMinUidForFolder(accountId: string, folder: string): number {
+/**
+ * そのIMAPフォルダから取得済みのUID（id 形式 'accountId-uid-sourceFolder' で判定）。
+ * フィルター移動・ローカル削除後も含める。UIDはフォルダごとに独立しているため、
+ * DBの folder 列や他フォルダのUIDで「取得済み」を判定してはいけない。
+ */
+export function getFetchedUidsForSourceFolder(accountId: string, folder: string): Set<number> {
   const db = getDb();
-  // id 形式 'accountId-uid-sourceFolder' でそのフォルダから取得されたメールの最小UIDを返す
-  const row = db.prepare(`
-    SELECT MIN(uid) as min_uid FROM emails
-    WHERE account_id = ? AND id LIKE ? AND is_deleted = 0
-  `).get(accountId, `${accountId}-%-${folder}`) as { min_uid: number | null };
-  return row?.min_uid ?? 0;
+  const rows = db.prepare(`
+    SELECT uid FROM emails
+    WHERE account_id = ? AND id = account_id || '-' || uid || '-' || ?
+  `).all(accountId, folder) as { uid: number }[];
+  return new Set(rows.map((r) => r.uid));
 }
 
 export function getMaxUid(accountId: string, folder: string): number {
@@ -452,6 +456,13 @@ export function getFolderLastUid(accountId: string, folder: string): number {
     'SELECT last_uid FROM folder_sync_state WHERE account_id = ? AND folder = ?',
   ).get(accountId, folder) as { last_uid: number } | undefined;
   return row?.last_uid ?? 0;
+}
+
+export function getFolderUidValidity(accountId: string, folder: string): string | null {
+  const row = getDb().prepare(
+    'SELECT uid_validity FROM folder_sync_state WHERE account_id = ? AND folder = ?',
+  ).get(accountId, folder) as { uid_validity: string | null } | undefined;
+  return row?.uid_validity ?? null;
 }
 
 export function setFolderLastUid(accountId: string, folder: string, uid: number): void {
@@ -480,47 +491,61 @@ export function getEmailUidsForFolder(
   }));
 }
 
-// DBではカスタムフォルダにあるが、IMAPサーバー上はまだINBOXにある可能性があるメール
-export function getCustomFolderEmailUids(accountId: string): Map<number, string> {
-  const db = getDb();
-  const rows = db.prepare(`
-    SELECT uid, folder FROM emails
-    WHERE account_id = ?
-      AND folder != 'INBOX'
-      AND folder NOT LIKE '%Gmail%'
-      AND folder NOT LIKE '%重要%'
-      AND folder NOT LIKE '%Important%'
-      AND folder NOT LIKE '%Sent%'
-      AND folder NOT LIKE '%送信%'
-      AND folder NOT LIKE '%Draft%'
-      AND folder NOT LIKE '%下書き%'
-      AND folder NOT LIKE '%Trash%'
-      AND folder NOT LIKE '%ゴミ箱%'
-      AND folder NOT LIKE '%Spam%'
-      AND folder NOT LIKE '%Junk%'
-      AND folder NOT LIKE '%迷惑%'
-      AND is_deleted = 0
-  `).all(accountId) as { uid: number; folder: string }[];
-  // uid → 移動先フォルダ のマップ
-  return new Map(rows.map((r) => [r.uid, r.folder]));
-}
-
 export function getAllEmailUidsWithFlagsForFolder(
   accountId: string,
   folder: string,
-): { id: string; uid: number; isRead: boolean; isStarred: boolean }[] {
+): { id: string; accountId: string; folder: string; uid: number; isRead: boolean; isStarred: boolean }[] {
   const db = getDb();
   const rows = db.prepare(`
-    SELECT id, uid, is_read, is_starred FROM emails
+    SELECT id, account_id, folder, uid, is_read, is_starred FROM emails
     WHERE account_id = ? AND folder = ? AND is_deleted = 0
     ORDER BY uid DESC
-  `).all(accountId, folder) as { id: string; uid: number; is_read: number; is_starred: number }[];
+  `).all(accountId, folder) as { id: string; account_id: string; folder: string; uid: number; is_read: number; is_starred: number }[];
   return rows.map((r) => ({
     id: r.id,
+    accountId: r.account_id,
+    folder: r.folder,
     uid: r.uid,
     isRead: r.is_read === 1,
     isStarred: r.is_starred === 1,
   }));
+}
+
+export function applyFolderReconciliation(
+  accountId: string,
+  folder: string,
+  plan: {
+    flagUpdates: Array<{ id: string; uid: number; isRead: boolean; isStarred: boolean }>;
+    removals: Array<{ id: string; uid: number }>;
+    uidValidity?: string;
+  },
+): void {
+  const db = getDb();
+  const updateFlags = db.prepare(`
+    UPDATE emails SET is_read = ?, is_starred = ?
+    WHERE id = ? AND account_id = ? AND folder = ? AND uid = ? AND is_deleted = 0
+  `);
+  const removeMembership = db.prepare(`
+    DELETE FROM emails
+    WHERE id = ? AND account_id = ? AND folder = ? AND uid = ? AND is_deleted = 0
+  `);
+  const saveUidValidity = db.prepare(`
+    INSERT INTO folder_sync_state (account_id, folder, last_uid, uid_validity)
+    VALUES (?, ?, 0, ?)
+    ON CONFLICT(account_id, folder) DO UPDATE SET uid_validity = excluded.uid_validity
+  `);
+
+  db.transaction(() => {
+    for (const entry of plan.flagUpdates) {
+      updateFlags.run(entry.isRead ? 1 : 0, entry.isStarred ? 1 : 0, entry.id, accountId, folder, entry.uid);
+    }
+    for (const entry of plan.removals) {
+      removeMembership.run(entry.id, accountId, folder, entry.uid);
+    }
+    if (plan.uidValidity !== undefined) {
+      saveUidValidity.run(accountId, folder, plan.uidValidity);
+    }
+  })();
 }
 
 export function getAllEmailUidsForFolder(accountId: string, folder: string): Set<number> {

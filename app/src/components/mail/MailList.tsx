@@ -12,7 +12,7 @@ export function MailList() {
   const { selectedAccountId } = useAccountStore();
   const {
     threads, selectedThreadId, selectedFolder, loading, loadingMoreThreads, hasMoreThreads,
-    backfillingOlderEmails, syncing,
+    backfillingOlderEmails, backfillStatus, syncing,
     selectThread, markAllRead, searchResults, searchQuery, isSmartSearch,
     smartSearchAnswer, clearSearch, search, smartSearch, syncEmails, loadMoreThreads, loadThreads,
     emails, selectedEmailId, selectEmail, markRead, loadingMore, hasMore, loadMoreEmails, clearThread,
@@ -228,12 +228,15 @@ export function MailList() {
                       <span className="text-xs text-gray-400">過去のメールを取得中...</span>
                     </>
                   )}
-                  {!hasMoreThreads && !backfillingOlderEmails && !loadingMoreThreads && selectedAccountId && (
+                  {!hasMoreThreads && !backfillingOlderEmails && !loadingMoreThreads && backfillStatus === 'exhausted' && (
+                    <span className="text-xs text-gray-400">これ以上のメールはありません</span>
+                  )}
+                  {!hasMoreThreads && !backfillingOlderEmails && !loadingMoreThreads && backfillStatus !== 'exhausted' && selectedAccountId && (
                     <button
                       onClick={() => loadMoreThreads(selectedAccountId)}
                       className="text-xs text-gray-500 hover:text-gray-300 px-3 py-1 rounded hover:bg-white/5 transition-colors"
                     >
-                      さらに読み込む
+                      {backfillStatus === 'error' ? '取得に失敗しました（再試行）' : 'さらに読み込む'}
                     </button>
                   )}
                 </div>
