@@ -1,8 +1,7 @@
 import { ImapFlow, MailboxLockObject } from 'imapflow';
 import { Account, Folder } from '../../shared/types';
 import { parseRawEmail, ParsedEmail } from './parser';
-import { upsertEmail, UpsertEmailData, getMaxUid, getFolderLastUid, setFolderLastUid, getFolderUidValidity, getFetchedUidsForSourceFolder, getEmailUidsForFolder, getAllEmailUidsWithFlagsForFolder, updateEmailFlags, applyFolderReconciliation, saveAttachments, moveEmail, listEmails } from '../db/queries/emails';
-import { generateThreadId } from '../utils/thread';
+import { upsertEmail, UpsertEmailData, getMaxUid, getFolderLastUid, setFolderLastUid, getFolderUidValidity, getFetchedUidsForSourceFolder, resolveThreadId, getEmailUidsForFolder, getAllEmailUidsWithFlagsForFolder, updateEmailFlags, applyFolderReconciliation, saveAttachments, moveEmail, listEmails } from '../db/queries/emails';
 import { isBlocked } from '../db/queries/blocklist';
 import { applyFilters } from '../db/queries/filters';
 import { refreshMicrosoftToken, buildXOAuth2Token } from './microsoftAuth';
@@ -293,7 +292,7 @@ export async function syncFolder(
           subject: parsed.subject, bodyText: parsed.bodyText,
           bodyHtml: parsed.bodyHtml, date: parsed.date,
           isRead: true, hasAttachments: parsed.hasAttachments,
-          threadId: generateThreadId(account.id, parsed.subject, parsed.messageId),
+          threadId: resolveThreadId(account.id, parsed, `${account.id}-${msg.uid}-${folder}`),
         });
         blocked++;
         continue;
@@ -332,7 +331,7 @@ export async function syncFolder(
         bodyHtml: parsed.bodyHtml, date: parsed.date,
         isRead, isStarred,
         hasAttachments: parsed.hasAttachments,
-        threadId: generateThreadId(account.id, parsed.subject, parsed.messageId),
+        threadId: resolveThreadId(account.id, parsed, `${account.id}-${msg.uid}-${folder}`),
       });
 
       // 添付ファイルをDBに保存
@@ -493,7 +492,7 @@ export async function syncAllFolders(
           try { parsed = await parseRawEmail(msg.source); } catch { continue; }
 
           if (isBlocked(account.id, parsed.from.address)) {
-            upsertEmail({ id: `${account.id}-${msg.uid}-${folder}`, accountId: account.id, uid: msg.uid, messageId: parsed.messageId, folder: 'Trash', from: parsed.from, to: parsed.to, cc: parsed.cc, replyToAddress: parsed.replyToAddress, subject: parsed.subject, bodyText: parsed.bodyText, bodyHtml: parsed.bodyHtml, date: parsed.date, isRead: true, hasAttachments: parsed.hasAttachments, threadId: generateThreadId(account.id, parsed.subject, parsed.messageId) });
+            upsertEmail({ id: `${account.id}-${msg.uid}-${folder}`, accountId: account.id, uid: msg.uid, messageId: parsed.messageId, folder: 'Trash', from: parsed.from, to: parsed.to, cc: parsed.cc, replyToAddress: parsed.replyToAddress, subject: parsed.subject, bodyText: parsed.bodyText, bodyHtml: parsed.bodyHtml, date: parsed.date, isRead: true, hasAttachments: parsed.hasAttachments, threadId: resolveThreadId(account.id, parsed, `${account.id}-${msg.uid}-${folder}`) });
             continue;
           }
 
@@ -507,7 +506,7 @@ export async function syncAllFolders(
             pendingMoves.push({ uid: msg.uid, toFolder: filterResult.folder });
           }
 
-          upsertEmail({ id: `${account.id}-${msg.uid}-${folder}`, accountId: account.id, uid: msg.uid, messageId: parsed.messageId, folder: targetFolder, from: parsed.from, to: parsed.to, cc: parsed.cc, replyToAddress: parsed.replyToAddress, subject: parsed.subject, bodyText: parsed.bodyText, bodyHtml: parsed.bodyHtml, date: parsed.date, isRead, isStarred, hasAttachments: parsed.hasAttachments, threadId: generateThreadId(account.id, parsed.subject, parsed.messageId) });
+          upsertEmail({ id: `${account.id}-${msg.uid}-${folder}`, accountId: account.id, uid: msg.uid, messageId: parsed.messageId, folder: targetFolder, from: parsed.from, to: parsed.to, cc: parsed.cc, replyToAddress: parsed.replyToAddress, subject: parsed.subject, bodyText: parsed.bodyText, bodyHtml: parsed.bodyHtml, date: parsed.date, isRead, isStarred, hasAttachments: parsed.hasAttachments, threadId: resolveThreadId(account.id, parsed, `${account.id}-${msg.uid}-${folder}`) });
           if (parsed.attachments.length > 0) saveAttachments(`${account.id}-${msg.uid}-${folder}`, parsed.attachments);
           // このフォルダの lastUid を更新（他フォルダのUID汚染を防ぐ）
           setFolderLastUid(account.id, folder, msg.uid);
@@ -580,7 +579,7 @@ export async function syncAllFolders(
                 const targetFolder = filterResult?.folder ?? folder;
                 const isRead = filterResult?.markRead ? true : (msg.flags?.has('\\Seen') ?? false);
                 const isStarred = filterResult?.starred ?? false;
-                upsertEmail({ id: `${account.id}-${msg.uid}-${folder}`, accountId: account.id, uid: msg.uid, messageId: parsed.messageId, folder: targetFolder, from: parsed.from, to: parsed.to, cc: parsed.cc, replyToAddress: parsed.replyToAddress, subject: parsed.subject, bodyText: parsed.bodyText, bodyHtml: parsed.bodyHtml, date: parsed.date, isRead, isStarred, hasAttachments: parsed.hasAttachments, threadId: generateThreadId(account.id, parsed.subject, parsed.messageId) });
+                upsertEmail({ id: `${account.id}-${msg.uid}-${folder}`, accountId: account.id, uid: msg.uid, messageId: parsed.messageId, folder: targetFolder, from: parsed.from, to: parsed.to, cc: parsed.cc, replyToAddress: parsed.replyToAddress, subject: parsed.subject, bodyText: parsed.bodyText, bodyHtml: parsed.bodyHtml, date: parsed.date, isRead, isStarred, hasAttachments: parsed.hasAttachments, threadId: resolveThreadId(account.id, parsed, `${account.id}-${msg.uid}-${folder}`) });
                 if (parsed.attachments.length > 0) saveAttachments(`${account.id}-${msg.uid}-${folder}`, parsed.attachments);
                 setFolderLastUid(account.id, folder, msg.uid);
                 added++;
@@ -654,7 +653,7 @@ export async function syncFolderOlderEmails(
       try { parsed = await parseRawEmail(msg.source); } catch { continue; }
       if (isBlocked(account.id, parsed.from.address)) {
         // 通常同期と同じくゴミ箱扱いで記録する（記録しないと毎回取り直して先へ進めない）
-        upsertEmail({ id: `${account.id}-${msg.uid}-${folder}`, accountId: account.id, uid: msg.uid, messageId: parsed.messageId, folder: 'Trash', from: parsed.from, to: parsed.to, cc: parsed.cc, replyToAddress: parsed.replyToAddress, subject: parsed.subject, bodyText: parsed.bodyText, bodyHtml: parsed.bodyHtml, date: parsed.date, isRead: true, hasAttachments: parsed.hasAttachments, threadId: generateThreadId(account.id, parsed.subject, parsed.messageId) });
+        upsertEmail({ id: `${account.id}-${msg.uid}-${folder}`, accountId: account.id, uid: msg.uid, messageId: parsed.messageId, folder: 'Trash', from: parsed.from, to: parsed.to, cc: parsed.cc, replyToAddress: parsed.replyToAddress, subject: parsed.subject, bodyText: parsed.bodyText, bodyHtml: parsed.bodyHtml, date: parsed.date, isRead: true, hasAttachments: parsed.hasAttachments, threadId: resolveThreadId(account.id, parsed, `${account.id}-${msg.uid}-${folder}`) });
         continue;
       }
 
@@ -678,7 +677,7 @@ export async function syncFolderOlderEmails(
         bodyHtml: parsed.bodyHtml, date: parsed.date,
         isRead, isStarred,
         hasAttachments: parsed.hasAttachments,
-        threadId: generateThreadId(account.id, parsed.subject, parsed.messageId),
+        threadId: resolveThreadId(account.id, parsed, `${account.id}-${msg.uid}-${folder}`),
       });
       if (parsed.attachments.length > 0) {
         saveAttachments(`${account.id}-${msg.uid}-${folder}`, parsed.attachments);

@@ -1,9 +1,12 @@
 import PostalMime from 'postal-mime';
 import sanitizeHtml from 'sanitize-html';
 import { EmailAddress } from '../../shared/types';
+import { extractMessageIds } from '../utils/thread';
 
 export interface ParsedEmail {
   messageId: string;
+  inReplyTo: string[];   // In-Reply-To の Message-ID（<> なし）
+  references: string[];  // References の Message-ID（古い順、<> なし）
   from: EmailAddress;
   to: EmailAddress[];
   cc: EmailAddress[];
@@ -63,6 +66,8 @@ export async function parseRawEmail(source: Uint8Array | Buffer | string): Promi
 
   return {
     messageId: parsed.messageId ?? '',
+    inReplyTo: extractMessageIds(parsed.inReplyTo),
+    references: extractMessageIds(parsed.references),
     from: normalizeAddress(parsed.from),
     to: (parsed.to ?? []).map(normalizeAddress),
     cc: (parsed.cc ?? []).map(normalizeAddress),

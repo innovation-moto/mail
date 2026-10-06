@@ -2,7 +2,7 @@ import Database from 'better-sqlite3';
 import path from 'path';
 import { app } from 'electron';
 import { SCHEMA_SQL } from './schema';
-import { generateThreadId } from '../utils/thread';
+import { isReplySubject } from '../utils/thread';
 
 let db: Database.Database | null = null;
 
@@ -45,7 +45,7 @@ export function getDb(): Database.Database {
         const update = db.prepare('UPDATE emails SET thread_id = ? WHERE id = ?');
         const run = db.transaction(() => {
           for (const row of rows) {
-            update.run(generateThreadId(row.account_id, row.subject ?? '', row.message_id), row.id);
+            update.run(`${row.account_id}:msgid:${row.message_id || row.id}`, row.id);
           }
         });
         run();
@@ -75,6 +75,39 @@ export function getDb(): Database.Database {
       db.exec('ALTER TABLE folder_sync_state ADD COLUMN uid_validity TEXT');
     } catch {
       // カラムが既に存在する場合は無視
+    }
+
+    // マイグレーション: 件名だけでまとめていたスレッドを分解する（1回のみ）
+    // 既存メールは返信ヘッダーを保存していないため、件名グループ内に Re:/Fwd: のメールが
+    // 1通も無いもの（銀行通知など同じ件名の別メール）だけを1通ずつのスレッドに分ける。
+    // 返信を含むグループは会話とみなして従来の件名スレッドのまま残す。
+    try {
+      const done = db.prepare("SELECT value FROM settings WHERE key = 'migration_thread_by_headers'").get();
+      if (!done) {
+        const rows = db.prepare(
+          "SELECT id, account_id, thread_id, subject, message_id FROM emails WHERE thread_id IS NOT NULL AND thread_id NOT LIKE '%:msgid:%'",
+        ).all() as { id: string; account_id: string; thread_id: string; subject: string | null; message_id: string | null }[];
+        const groups = new Map<string, typeof rows>();
+        for (const row of rows) {
+          const g = groups.get(row.thread_id);
+          if (g) g.push(row); else groups.set(row.thread_id, [row]);
+        }
+        const update = db.prepare('UPDATE emails SET thread_id = ? WHERE id = ?');
+        let changed = 0;
+        db.transaction(() => {
+          for (const group of groups.values()) {
+            if (group.some((r) => isReplySubject(r.subject ?? ''))) continue;
+            for (const r of group) {
+              update.run(`${r.account_id}:msgid:${r.message_id || r.id}`, r.id);
+              changed++;
+            }
+          }
+          db!.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('migration_thread_by_headers', '1')").run();
+        })();
+        console.log(`[migration] split subject-only threads: ${changed} emails`);
+      }
+    } catch (e) {
+      console.warn('[migration] thread split failed:', e);
     }
 
     // マイグレーション: ゴミ箱・迷惑メール内の未読メールを既読にする（Gmailと同じ挙動）

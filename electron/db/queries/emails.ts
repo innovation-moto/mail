@@ -1,4 +1,5 @@
 import { getDb } from '../index';
+import { rootThreadId } from '../../utils/thread';
 import { Email, EmailAddress, Attachment } from '../../../shared/types';
 
 interface EmailRow {
@@ -149,6 +150,28 @@ export interface UpsertEmailData {
   isStarred?: boolean;
   hasAttachments: boolean;
   threadId?: string;
+}
+
+/**
+ * 返信ヘッダーからスレッドIDを決める。件名が同じだけのメール（銀行の通知など）はまとめない。
+ * 参照先のメールが取り込み済みならそのスレッドに合流し、無ければ会話の起点 Message-ID を使う。
+ */
+export function resolveThreadId(
+  accountId: string,
+  parsed: { messageId: string; inReplyTo: string[]; references: string[] },
+  fallbackKey: string,
+): string {
+  const refs = [...parsed.inReplyTo, ...[...parsed.references].reverse()];
+  if (refs.length > 0) {
+    const stmt = getDb().prepare(
+      'SELECT thread_id FROM emails WHERE account_id = ? AND message_id = ? AND thread_id IS NOT NULL LIMIT 1',
+    );
+    for (const ref of refs) {
+      const row = stmt.get(accountId, ref) as { thread_id: string } | undefined;
+      if (row) return row.thread_id;
+    }
+  }
+  return rootThreadId(accountId, parsed.messageId, parsed.references, parsed.inReplyTo, fallbackKey);
 }
 
 export function upsertEmail(data: UpsertEmailData): void {
