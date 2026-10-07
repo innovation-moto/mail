@@ -7,10 +7,10 @@ import { getEncryptedPassword } from '../db/queries/accounts';
 function writeLog(msg: string): void {
   appendLog('sync.log', `${new Date().toISOString()} ${msg}`);
 }
-import { getUnreadCount, listEmails, getTotalUnreadCount, getDistinctFolders, getThreadUnreadCounts } from '../db/queries/emails';
+import { getTotalUnreadCount, getDistinctFolders, getThreadUnreadCounts } from '../db/queries/emails';
 import { syncAllFolders, fetchFolders } from './imap';
 import { getAllSettings } from '../db/queries/settings';
-import { showNewMailNotification } from './notification';
+import { notifyNewMail } from './notification';
 import { pushFolderStateToImap, cleanupConfigMessages, pullFilterRulesFromImap } from './filterSync';
 import { startIdleWatcher, stopAllIdleWatchers } from './imapIdle';
 
@@ -125,16 +125,11 @@ export async function syncAllAccounts(win?: BrowserWindow): Promise<void> {
           password,
           foldersToSync,
           50,
-          (folder, folderAdded, folderUnreadAdded) => {
-            // 未読の新着があれば通知（INBOX・カスタムフォルダ問わず）
-            if (folderUnreadAdded > 0 && settings.notificationsEnabled) {
-              writeLog(`[notif-check] account=${account.email} folder=${folder} unreadAdded=${folderUnreadAdded}`);
-              const latest = listEmails(account.id, folder, 1, 0)[0];
-              showNewMailNotification(account.email, folderUnreadAdded, latest
-                ? { from: latest.from.name || latest.from.address, subject: latest.subject, bodyText: latest.bodyText }
-                : undefined,
-                latest?.id,
-              );
+          (folder, folderAdded, newMail) => {
+            // 通知対象の新着（未読・自分以外・通知対象フォルダ）があれば通知
+            if (newMail.length > 0 && settings.notificationsEnabled) {
+              writeLog(`[notif-check] account=${account.email} folder=${folder} notify=${newMail.length}`);
+              notifyNewMail(account.email, newMail);
             }
             // フォルダごとに完了したら即座にrendererへ通知
             if (folderAdded > 0) {
@@ -207,18 +202,10 @@ async function quickInboxCheck(account: any, win: BrowserWindow): Promise<void> 
     try { password = safeStorage.decryptString(encPwd); } catch { return; }
 
     const settings = getAllSettings();
-    const { totalAdded } = await syncAllFolders(account, password, ['INBOX'], 20);
+    const { totalAdded, newMail } = await syncAllFolders(account, password, ['INBOX'], 20);
     if (totalAdded > 0) {
-      writeLog(`[inbox-check] account=${account.email} totalAdded=${totalAdded}`);
-      if (settings.notificationsEnabled) {
-        // フィルタ移動先も含め最新メールを取得
-        const latest = listEmails(account.id, 'INBOX', 1, 0)[0];
-        showNewMailNotification(account.email, totalAdded, latest
-          ? { from: latest.from.name || latest.from.address, subject: latest.subject, bodyText: latest.bodyText }
-          : undefined,
-          latest?.id,
-        );
-      }
+      writeLog(`[inbox-check] account=${account.email} totalAdded=${totalAdded} notify=${newMail.length}`);
+      if (settings.notificationsEnabled) notifyNewMail(account.email, newMail);
       updateBadge();
       const unreadCounts = getThreadUnreadCounts(account.id);
       win.webContents.send('mail:synced', { accountId: account.id, added: totalAdded, unreadCounts });

@@ -2,8 +2,8 @@ import { ImapFlow } from 'imapflow';
 import type { Account } from '../../shared/types';
 import { BrowserWindow, app } from 'electron';
 import { syncAllFolders } from './imap';
-import { getAllFolderUnreadCounts, getTotalUnreadCount, getUnreadCount, listEmails } from '../db/queries/emails';
-import { showNewMailNotification } from './notification';
+import { getAllFolderUnreadCounts, getTotalUnreadCount } from '../db/queries/emails';
+import { notifyNewMail } from './notification';
 import { appendLog } from './logFile';
 import { getAllSettings } from '../db/queries/settings';
 
@@ -57,8 +57,7 @@ async function triggerInboxSync(
   state.syncing = true;
   state.pendingSync = false;
   try {
-    const beforeUnread = getUnreadCount(account.id, 'INBOX');
-    const { totalAdded } = await syncAllFolders(account, password, ['INBOX'], 50);
+    const { totalAdded, newMail } = await syncAllFolders(account, password, ['INBOX'], 50);
     if (totalAdded > 0) {
       const unreadCounts = getAllFolderUnreadCounts(account.id);
       win?.webContents.send('mail:synced', { accountId: account.id, added: totalAdded, unreadCounts });
@@ -67,17 +66,7 @@ async function triggerInboxSync(
 
       // 通知
       const settings = getAllSettings();
-      if (settings.notificationsEnabled) {
-        const newUnread = getUnreadCount(account.id, 'INBOX') - beforeUnread;
-        if (newUnread > 0) {
-          const latest = listEmails(account.id, 'INBOX', 1, 0)[0];
-          showNewMailNotification(account.email, newUnread, latest
-            ? { from: latest.from.name || latest.from.address, subject: latest.subject, bodyText: latest.bodyText }
-            : undefined,
-            latest?.id,
-          );
-        }
-      }
+      if (settings.notificationsEnabled) notifyNewMail(account.email, newMail);
     }
   } catch (err) {
     console.warn(`[idle] ${account.email} sync error:`, (err as Error).message);

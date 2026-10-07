@@ -420,16 +420,36 @@ export async function syncFlags(
 /**
  * 1接続で全フォルダを順番に同期（接続過多によるタイムアウト解消）
  */
+/** 通知対象の新着メール（通知の重複排除は messageId 単位で行う） */
+export interface NewMailInfo {
+  key: string; // Message-ID（無ければメールID）
+  from: string;
+  subject: string;
+  bodyText: string;
+  date: number;
+}
+
+// 通知しないフォルダ（送信済み・下書き・ゴミ箱・迷惑メール、および Gmail の全メール/重要/スター付き）。
+// 全メール・重要は INBOX 等と同じメールの別コピーなので、通知すると重複する
+const NO_NOTIFY_FOLDER_RE = /^(sent|sent items|sent messages|sent mail|送信済み.*|drafts?|下書き|trash|deleted.*|ゴミ箱|junk.*|spam|迷惑.*|all mail|すべてのメール|important|重要|starred|スター付き|archive|im-mail-config)$/i;
+
+export function isNoNotifyFolder(folder: string): boolean {
+  const last = folder.split(/[/.]/).pop() ?? folder;
+  return NO_NOTIFY_FOLDER_RE.test(folder) || NO_NOTIFY_FOLDER_RE.test(last);
+}
+
 export async function syncAllFolders(
   account: Account,
   password: string,
   folders: string[],
   limit = 50,
-  onFolderDone?: (folder: string, added: number, unreadAdded: number) => void,
+  onFolderDone?: (folder: string, added: number, newMail: NewMailInfo[]) => void,
   signal?: AbortSignal,
-): Promise<{ totalAdded: number }> {
+): Promise<{ totalAdded: number; newMail: NewMailInfo[] }> {
   const client = await createClientWithRefresh(account, password);
   let totalAdded = 0;
+  const allNewMail: NewMailInfo[] = [];
+  const selfAddress = account.email.toLowerCase();
 
   try {
     await client.connect();
@@ -443,13 +463,13 @@ export async function syncAllFolders(
         if (!mailbox) throw new Error(`mailbox not found: ${folder}`);
         throwIfSyncAborted(signal);
         if (!prepareFolderUidValidity(account.id, folder, getMailboxUidValidity(client))) {
-          onFolderDone?.(folder, 0, 0);
+          onFolderDone?.(folder, 0, []);
           continue;
         }
         if (mailbox.exists === 0) {
           const reconciled = await reconcileSelectedFolder(client, account.id, folder, signal);
           console.log(`[sync] ${folder}: empty; reconciled removed=${reconciled.removed}`);
-          onFolderDone?.(folder, 0, 0);
+          onFolderDone?.(folder, 0, []);
           continue;
         }
 
@@ -473,7 +493,7 @@ export async function syncAllFolders(
         }
 
         let added = 0;
-        let unreadAdded = 0;
+        const newMail: NewMailInfo[] = [];
         let count = 0;
 
         // フェッチ中にIMAP移動が必要なものを収集（ループ後にまとめて実行してハング回避）
@@ -511,7 +531,23 @@ export async function syncAllFolders(
           // このフォルダの lastUid を更新（他フォルダのUID汚染を防ぐ）
           setFolderLastUid(account.id, folder, msg.uid);
           added++;
-          if (!isRead) unreadAdded++;
+          // 通知対象: 未読・自分以外から・通知対象フォルダ（振り分け先も含めて判定）。
+          // 初回同期（lastKnownUid=0）は過去分の取り込みなので通知しない
+          if (
+            lastKnownUid > 0
+            && !isRead
+            && parsed.from.address.toLowerCase() !== selfAddress
+            && !isNoNotifyFolder(folder)
+            && !isNoNotifyFolder(targetFolder)
+          ) {
+            newMail.push({
+              key: parsed.messageId || `${account.id}-${msg.uid}-${folder}`,
+              from: parsed.from.name || parsed.from.address,
+              subject: parsed.subject,
+              bodyText: parsed.bodyText,
+              date: parsed.date,
+            });
+          }
         }
 
         // --- 既存メールのフィルター再適用（フィルター設定前に届いたメールを救済） ---
@@ -594,9 +630,10 @@ export async function syncAllFolders(
           console.warn(`[sync] ${folder}: backfill failed (ignored):`, (backfillErr as Error).message);
         }
 
-        console.log(`[sync] ${folder}: done added=${added} unreadAdded=${unreadAdded}`);
+        console.log(`[sync] ${folder}: done added=${added} notify=${newMail.length}`);
         totalAdded += added;
-        onFolderDone?.(folder, added, unreadAdded);
+        allNewMail.push(...newMail);
+        onFolderDone?.(folder, added, newMail);
       } catch (e) {
         if (signal?.aborted) throw e;
         console.error(`[sync] folder=${folder} error:`, (e as Error).message);
@@ -609,7 +646,7 @@ export async function syncAllFolders(
     await safeLogout(client);
   }
 
-  return { totalAdded };
+  return { totalAdded, newMail: allNewMail };
 }
 
 /**

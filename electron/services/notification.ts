@@ -1,14 +1,15 @@
 import { Notification } from 'electron';
 import { appendLog } from './logFile';
+import type { NewMailInfo } from './imap';
 
 // GC防止のため最近の通知オブジェクトを保持
 const activeNotifications: Notification[] = [];
 
 // 通知済みメールの重複排除。INBOX通知は IMAP IDLE・30秒チェック・定期同期の
 // 3経路が独立して発火するため、同じメールを複数回通知してしまう。
-// 通知対象メールの安定ID（latest.id）を記録し、一度通知したメールは再通知しない。
-const NOTIFIED_TTL_MS = 60 * 60 * 1000; // 1時間で失効（メモリ肥大防止）
-const NOTIFIED_MAX = 1000;
+// 加えて Gmail ではラベル（フォルダ）ごとに同じメールが届く。Message-ID を記録し、一度通知したメールは再通知しない。
+const NOTIFIED_TTL_MS = 24 * 60 * 60 * 1000; // 24時間で失効（メモリ肥大防止）
+const NOTIFIED_MAX = 5000;
 const notifiedKeys = new Map<string, number>(); // key -> 通知時刻(ms)
 
 function alreadyNotified(key: string): boolean {
@@ -34,27 +35,27 @@ function writeNotifLog(msg: string): void {
   appendLog('notification.log', `${new Date().toISOString()} ${msg}`);
 }
 
-export function showNewMailNotification(
-  accountEmail: string,
-  count: number,
-  latest?: { from: string; subject: string; bodyText: string },
-  notifyKey?: string,
-): void {
-  writeNotifLog(`called: account=${accountEmail} count=${count} key=${notifyKey ?? '-'} supported=${Notification.isSupported()}`);
+/**
+ * 新着メールを通知する。3経路（IDLE・30秒チェック・定期同期）や複数フォルダ（Gmail のラベル）から
+ * 同じメールが渡されても、Message-ID 単位で一度だけ通知する。
+ */
+export function notifyNewMail(accountEmail: string, mails: NewMailInfo[]): void {
+  if (mails.length === 0) return;
+  const fresh = mails.filter((m, i) =>
+    mails.findIndex((x) => x.key === m.key) === i && !alreadyNotified(`${accountEmail}|${m.key}`),
+  );
+  writeNotifLog(`called: account=${accountEmail} given=${mails.length} fresh=${fresh.length} supported=${Notification.isSupported()}`);
+  if (fresh.length === 0) {
+    writeNotifLog('SKIP: all duplicate');
+    return;
+  }
   if (!Notification.isSupported()) {
     writeNotifLog('SKIP: not supported');
     return;
   }
 
-  // 同じ最新メールに対する通知は1回だけ（3経路の重複・UID競合による再通知を防ぐ）
-  if (notifyKey) {
-    const dedupKey = `${accountEmail}|${notifyKey}`;
-    if (alreadyNotified(dedupKey)) {
-      writeNotifLog(`SKIP: duplicate key=${dedupKey}`);
-      return;
-    }
-  }
-
+  const count = fresh.length;
+  const latest = fresh.reduce((a, b) => (b.date > a.date ? b : a));
   let title: string;
   let subtitle: string | undefined;
   let body: string;
